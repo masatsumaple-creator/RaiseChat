@@ -240,7 +240,7 @@ $\color{red}{\text{次の順序で、1 つのトランザクションで行う�
 
 1. $\color{red}{\text{トークンのハッシュで招待の行を読み、存在と有効(取り消されていない、期限内)を確認して、workspace\_id を得る。無効なら失敗。}}$
 2. $\color{red}{\text{Membership を、ON CONFLICT DO NOTHING で挿入する(role は member、status は active)。}}$
-3. $\color{red}{\text{挿入できなかった場合(すでに行がある)は、既存の status を見る。kicked なら失敗(再参加不可)。active なら何もせず成功で終了する(使用回数は増やさない)。}}$
+3. $\color{red}{\text{挿入できなかった場合(すでに行がある)は、既存の status を見る。kicked なら失敗(再参加不可。応答は、無効なリンクと同じ 404 で、kicked であることを知らせない)。active なら何もせず成功で終了する(使用回数は増やさない)。}}$
 4. $\color{red}{\text{挿入できた場合のみ、下記の条件付き更新で使用回数を消費する。更新が 0 件ならロールバックする(上限に達した)。}}$
 5. $\color{red}{\text{既定チャンネル(general)の ChannelMember を挿入する。}}$
 
@@ -306,8 +306,8 @@ $\color{red}{\text{認可は、リクエストのたびに DB で確認する。
 ### 4.1 認証と共通のガード
 
 - $\color{red}{\text{認証: セッション Cookie(HttpOnly、Secure、SameSite=Lax)。リクエストごとに sessions を引き、期限内か確認する。}}$
-- $\color{red}{\text{CSRF 対策: GET 以外のリクエストは、Origin ヘッダが許可するオリジンと一致しなければ拒否する。状態を変える操作を GET で行わない。}}$
-- $\color{red}{\text{パスワードを扱う API(登録・ログイン・再設定)は、レート制限をかける(§1.1)。}}$
+- $\color{red}{\text{CSRF 対策: GET 以外のリクエストは、Origin ヘッダが許可するオリジンと一致しなければ 403 で拒否する。Origin ヘッダがない場合も拒否する(Referer や Sec-Fetch-Site で代替しない)。ブラウザは、同じオリジンからの GET 以外のリクエストにも Origin を付けるため、正規の画面には影響しない。状態を変える操作を GET で行わない。WebSocket のハンドシェイクの Origin 検証は、PR 3 で定義する。}}$
+- $\color{red}{\text{レート制限(§1.1 のとおりメモリ上で管理し、超過は 429)の対象は、次のとおり。(1) 登録・ログイン・パスワード再設定。再設定は FR-005 の基準に従う。(2) 招待リンクの確認と受諾。トークンが無効だった試行(存在しない・期限切れ・取り消し・回数超過・kicked を区別せず、すべて失敗として数える)だけを数え、ユーザー単位で 15 分に 10 回、同一 IP 全体で 15 分に 30 回とする。有効なリンクの利用は、数えない。トークンの総当たりと、有効性の探索を防ぐため。}}$
 
 共通のガード(サーバー内の関数)を、次のとおり定義する。API の認可は、これらの組み合わせで書く。
 
@@ -387,8 +387,8 @@ $\color{red}{\text{パスの先頭に /api を付ける。ID は uuid(メッセ�
 | `POST /workspaces/:ws/invitations` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{招待リンクの発行(有効期限・回数を指定)。トークンは、この応答でだけ返す}}$ | 301 |
 | `GET /workspaces/:ws/invitations` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{発行済みリンクの一覧(トークンは返さない)}}$ | 301 |
 | `DELETE /workspaces/:ws/invitations/:id` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{リンクの取り消し(revoked\_at を設定)}}$ | 301 |
-| `GET /invitations/:token` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{受諾前の確認。ワークスペース名と、有効かどうかだけを返す(無効な理由は区別しない)}}$ | 301 |
-| `POST /invitations/:token/accept` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{招待の受諾(§3.1 の手順)。参加済みなら成功を返す}}$ | 301 |
+| `GET /invitations/:token` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{受諾前の確認。ワークスペース名と、有効かどうかだけを返す。無効の場合は、理由(存在しない・期限切れ・取り消し・回数超過・kicked)を区別せず、同じ 404 と同じ文言を返す。レート制限の対象(§4.1)}}$ | 301 |
+| `POST /invitations/:token/accept` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{招待の受諾(§3.1 の手順)。参加済みなら成功を返す。失敗は、上記の確認と同じ 404 と同じ文言で、kicked の場合も区別しない。レート制限の対象(§4.1)}}$ | 301 |
 | `POST /workspaces/:ws/members/:userId/kick` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{キック(§2.1 の手順)。WebSocket のルームからも除外する}}$ | 302 |
 | `GET /workspaces/:ws/kicked` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{キック済みユーザーの一覧}}$ | 304 |
 | `DELETE /workspaces/:ws/kicked/:userId` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{キックの解除(Membership の行を削除)}}$ | 304 |
