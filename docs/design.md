@@ -2,10 +2,10 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | 0.1(ドラフト。PR 1: 技術選定・DB スキーマ) |
+| 版 | 0.2(ドラフト。PR 1: 技術選定・DB スキーマ、PR 2: 認可ルール・REST API 一覧) |
 | 作成日 | 2026-11-23 |
 | 前提 | [要件定義書](requirements.md)(0.2 以降) |
-| 今後の追加 | PR 2: 認可ルール・REST API 一覧 / PR 3: WebSocket のイベント設計・フェーズ 1 の実装タスク |
+| 今後の追加 | PR 3: WebSocket のイベント設計・フェーズ 1 の実装タスク |
 
 **表記ルール**: 要件定義書と同じ。最初に提示された要件にない決定事項は $\color{red}{\text{赤文字}}$ で表記する。設計書は全体が要件定義書からの派生のため、ほぼ全体が赤文字になる。コードブロックは色を付けられないため、ブロック全体が設計案である。
 
@@ -240,7 +240,7 @@ $\color{red}{\text{次の順序で、1 つのトランザクションで行う�
 
 1. $\color{red}{\text{トークンのハッシュで招待の行を読み、存在と有効(取り消されていない、期限内)を確認して、workspace\_id を得る。無効なら失敗。}}$
 2. $\color{red}{\text{Membership を、ON CONFLICT DO NOTHING で挿入する(role は member、status は active)。}}$
-3. $\color{red}{\text{挿入できなかった場合(すでに行がある)は、既存の status を見る。kicked なら失敗(再参加不可)。active なら何もせず成功で終了する(使用回数は増やさない)。}}$
+3. $\color{red}{\text{挿入できなかった場合(すでに行がある)は、既存の status を見る。kicked なら失敗(再参加不可。応答は、無効なリンクと同じ 404 で、kicked であることを知らせない)。active なら何もせず成功で終了する(使用回数は増やさない)。}}$
 4. $\color{red}{\text{挿入できた場合のみ、下記の条件付き更新で使用回数を消費する。更新が 0 件ならロールバックする(上限に達した)。}}$
 5. $\color{red}{\text{既定チャンネル(general)の ChannelMember を挿入する。}}$
 
@@ -299,7 +299,160 @@ SELECT m.*
 
 $\color{red}{\text{検索では、参加チャンネルの結合により、権限外のチャンネルと DM が結果に入らない。ワークスペースを指定して検索し、他のワークスペースの結果は混ぜない。ESCAPE の前提は standard\_conforming\_strings がオン(PostgreSQL 16 の既定)。結合テストで、バックスラッシュ・パーセント・アンダースコアを含む語を確認する。}}$
 
-## 4. 未決事項(設計)
+## 4. 認可ルール
+
+$\color{red}{\text{認可は、リクエストのたびに DB で確認する。所属情報をキャッシュしたり、トークンに埋め込んだりしない(キック・退出の即時反映と、IDOR 対策のため)。}}$
+
+### 4.1 認証と共通のガード
+
+- $\color{red}{\text{認証: セッション Cookie(HttpOnly、Secure、SameSite=Lax)。リクエストごとに sessions を引き、期限内か確認する。}}$
+- $\color{red}{\text{CSRF 対策: GET 以外のリクエストは、Origin ヘッダが許可するオリジンと一致しなければ 403 で拒否する。Origin ヘッダがない場合も拒否する(Referer や Sec-Fetch-Site で代替しない)。ブラウザは、同じオリジンからの GET 以外のリクエストにも Origin を付けるため、正規の画面には影響しない。状態を変える操作を GET で行わない。WebSocket のハンドシェイクの Origin 検証は、PR 3 で定義する。}}$
+- $\color{red}{\text{レート制限(§1.1 のとおりメモリ上で管理し、超過は 429)の対象は、次のとおり。(1) 登録・ログイン・パスワード再設定。再設定は FR-005 の基準に従う。(2) 招待リンクの確認と受諾。トークンが無効だった試行(存在しない・期限切れ・取り消し・回数超過・kicked を区別せず、すべて失敗として数える)だけを数え、ユーザー単位で 15 分に 10 回、同一 IP 全体で 15 分に 30 回とする。有効なリンクの利用は、数えない。トークンの総当たりと、有効性の探索を防ぐため。IP の取得元は、リバースプロキシの背後では、設定で指定した信頼するプロキシのアドレスから届いた X-Forwarded-For だけを使い(Fastify の trustProxy を、プロキシのアドレスに限定して設定する)、それ以外の経路では、ヘッダを無視して接続元のアドレスを使う(ヘッダの偽装で制限を回避されないため)。同じ NAT の内側の別のユーザーが、失敗を重ねると、IP 単位の上限に達して、正規のユーザーも 429 になり得るが、小規模の利用では許容する(15 分で解除される)。}}$
+
+共通のガード(サーバー内の関数)を、次のとおり定義する。API の認可は、これらの組み合わせで書く。
+
+| ガード | 条件 | 失敗時 |
+|---|---|---|
+| requireUser | $\color{red}{\text{有効なセッションがある}}$ | $\color{red}{\text{401}}$ |
+| requireMember(ws) | $\color{red}{\text{そのワークスペースの Membership が active}}$ | $\color{red}{\text{kicked なら 403、行がなければ 404}}$ |
+| requireOwner(ws) | $\color{red}{\text{requireMember を満たし、role が owner}}$ | $\color{red}{\text{403}}$ |
+| requireChannel(ch) | $\color{red}{\text{チャンネルが存在し、呼び出し者の ChannelMember の行がある。判定は ChannelMember の行だけで行う(kick 時にそのワークスペースの ChannelMember の行は削除されるため、kicked のユーザーは、行がなく、必ず 404 になる)}}$ | $\color{red}{\text{常に 404(存在しない場合、別のワークスペースの場合、非参加の場合、kicked の場合を区別しない)。403 は返さない}}$ |
+| requireAuthor(msg) | $\color{red}{\text{requireChannel を満たし、メッセージが削除済みでなく、投稿者が本人}}$ | $\color{red}{\text{削除済みなら 404(投稿者以外にも 404)。投稿者以外は 403}}$ |
+
+$\color{red}{\text{ステータスの原則: ワークスペースを指定する API(パスに /workspaces/:ws を含むもの)は、kicked なら 403、Membership の行がなければ 404(FR-302)。チャンネルまたはメッセージを指定する API は、ChannelMember の行がなければ、kicked を含めて 404(存在を隠す)。例外は、参加(join)、チャンネル削除、プライベートチャンネルへの招待(いずれも §4.4 に順序を定義)と、招待リンクの API(§5.2)。結合テストでは、これらの例外の各ステータスと、オーナーによる自己追加の 403 を確認する。}}$
+
+メッセージ ID を指定する API(パスが /messages/:id で始まるもの、および添付の取得)は、まず ID からメッセージと、その channel を引き、次の順で認可する。上から順に判定し、最初に当てはまったところで終了する。
+
+1. $\color{red}{\text{メッセージが存在しない場合は 404。}}$
+2. $\color{red}{\text{そのチャンネルに対する requireChannel を満たさない場合は 404(別のワークスペース、非参加のプライベートチャンネル、他人の DM、kicked を含む)。}}$
+3. $\color{red}{\text{メッセージが削除済みの場合の扱いは、下記のとおり。}}$
+4. $\color{red}{\text{編集・削除の場合は、さらに投稿者を確認する(投稿者以外は 403)。}}$
+
+$\color{red}{\text{削除済みのメッセージ(deleted\_at が設定されている)への操作は、次のとおり。(1) 編集・再度の削除・リアクションの付与・新しい返信の投稿は、404(編集と削除は、投稿者以外にも 404 を返し、403 より先に判定する)。(2) リアクションの解除は、冪等な操作とし、自分のリアクションがなくても、常に成功を返す(削除前に付けたリアクションの解除も、成功になる)。(3) 既存の返信の取得と閲覧は、スレッドが「削除されました」の親の下に残る(FR-105)ため、可能。}}$
+
+### 4.2 権限マトリクス(要件定義書 §3 の具体化)
+
+| 操作 | ガード |
+|---|---|
+| ワークスペース作成 | $\color{red}{\text{requireUser}}$ |
+| 招待リンクの発行・一覧・取り消し | $\color{red}{\text{requireOwner}}$ |
+| 招待リンクの受諾 | $\color{red}{\text{requireUser(Membership の確認は §3.1 の手順)}}$ |
+| キック・キック解除 | $\color{red}{\text{requireOwner。対象がオーナー自身なら 400}}$ |
+| チャンネル作成 | $\color{red}{\text{requireMember}}$ |
+| チャンネル削除 | $\color{red}{\text{active なオーナーのみ。判定の順序と失敗時のステータスは §4.4(既定チャンネル(general)と DM は 400)}}$ |
+| パブリックチャンネルの一覧(未参加のものを含む) | $\color{red}{\text{requireMember}}$ |
+| パブリックチャンネルへの参加 | $\color{red}{\text{requireMember(チャンネルが public であること)}}$ |
+| チャンネルからの退出 | $\color{red}{\text{requireChannel。既定チャンネルと DM は 400}}$ |
+| プライベートチャンネルへの招待 | $\color{red}{\text{作成者(Channel.created\_by)で、かつ参加者、またはオーナー。対象は、同じワークスペースの active メンバーのみ}}$ |
+| チャンネル管理一覧(プライベートの名前を含む) | $\color{red}{\text{requireOwner}}$ |
+| メッセージの閲覧・投稿 | $\color{red}{\text{requireChannel}}$ |
+| メッセージの検索 | $\color{red}{\text{requireMember。結果は、自分が参加しているチャンネルと DM のみ(§3.3 の結合で絞る)}}$ |
+| メッセージの編集・削除 | $\color{red}{\text{requireAuthor}}$ |
+| リアクションの付与・解除 | $\color{red}{\text{requireChannel(自分の分だけ。付与は削除済みメッセージに不可、解除は冪等で常に成功)}}$ |
+| 添付ファイルの取得 | $\color{red}{\text{添付が属するメッセージのチャンネルに対する requireChannel。削除済みメッセージの添付は 404}}$ |
+| プロフィールの変更 | $\color{red}{\text{requireUser(自分のみ)}}$ |
+| 他ユーザーのアバターの取得 | $\color{red}{\text{requireUser。かつ、本人、または、同じワークスペースに共に active で所属している(それ以外は 404)}}$ |
+
+### 4.3 エラーの方針
+
+- $\color{red}{\text{エラー形式は、HTTP ステータスと、code と message を持つ JSON。message には、内部情報や存在の有無を含めない。}}$
+- $\color{red}{\text{存在を隠す対象(非所属のワークスペース、非参加のプライベートチャンネル)は、権限がない場合も存在しない場合も同じ 404 を返す。}}$
+- $\color{red}{\text{ログイン・パスワード再設定の失敗は、理由を特定しない同一の文言で、同等の処理時間にする(FR-002、FR-005)。}}$
+
+### 4.4 チャンネルを指定する操作の失敗時のステータス
+
+$\color{red}{\text{存在を隠すべき相手(参加者でない人)には 404、存在を知っている相手(参加者)には、理由が分かるステータスを返す。次の順序で判定し、最初に当てはまったところで終了する。}}$
+
+| 操作 | 判定の順序と結果 |
+|---|---|
+| 参加(join) | $\color{red}{\text{(1) チャンネルが存在しない、または呼び出し者がそのチャンネルのワークスペースに Membership の行を持たない、またはチャンネルがプライベート・DM → 404。(2) 呼び出し者が kicked → 403(FR-302。kicked のユーザーは、そのワークスペースのパブリックチャンネルの存在が分かるが、キック前から知り得た情報であり、許容する)。(3) パブリックなら参加する(参加済みなら成功)。}}$ |
+| 退出(leave) | $\color{red}{\text{(1) 参加者でない(存在しない場合、別のワークスペースの場合、kicked の場合を含む) → 404。(2) 既定チャンネルまたは DM → 400。(3) 退出する。}}$ |
+| チャンネル削除 | $\color{red}{\text{(1) チャンネルが存在しない → 404。(2) 呼び出し者が、そのチャンネルのワークスペースの active なオーナーでない場合は、次のとおり。呼び出し者がそのチャンネルの参加者である、または、チャンネルがパブリックで呼び出し者が active メンバーである → 403(存在を知っている)。それ以外(非参加のプライベート・DM、別のワークスペース、kicked) → 404。(3) オーナーで、チャンネルが DM → 参加者なら 400、非参加なら 404(DM の存在を隠す)。(4) 既定チャンネル(general) → 400。(5) 削除する。}}$ |
+| プライベートへの招待 | $\color{red}{\text{(1) チャンネルが存在しない → 404。(2) 呼び出し者が、そのチャンネルの参加者でも、active なオーナーでもない(別のワークスペース、kicked を含む) → 404。(3) 呼び出し者がオーナーで参加者でなく、チャンネルが DM → 404(DM の存在を隠す)。(4) チャンネルが DM またはパブリック → 400。(5) 呼び出し者が、作成者でもオーナーでもない(参加者だけ) → 403。(6) 作成者は、参加者である間だけ有効(退出・キックされると、(5) の対象になる)。(7) 呼び出し者がオーナーで参加者でなく、招待する対象が自分自身 → 403(下記)。(8) 招待する対象が、同じワークスペースの active メンバーでない → 400。(9) 招待する(対象がすでに参加者なら成功)。}}$ |
+
+$\color{red}{\text{オーナーは、参加者でないプライベートチャンネルにも、他のユーザーを追加できる。ただし、自分自身を追加することはできない。管理一覧では名前だけを見せ、内容は見せない方針(FR-204、303)を、オーナーが迂回できないようにするため。内容を見たい場合は、チャンネルの作成者または参加者から招待される必要がある。}}$
+
+## 5. REST API 一覧
+
+$\color{red}{\text{パスの先頭に /api を付ける。ID は uuid(メッセージのみ数値)。JSON を送受信し、添付つきの投稿だけ multipart/form-data を使う。一覧の取得は、新しい順の 50 件ずつで、cursor(前のページの最後の ID)で次を取る。パスはコードで表記し、色は付けない。}}$
+
+### 5.1 認証・ユーザー
+
+| メソッド・パス | 認可 | 概要 | FR |
+|---|---|---|---|
+| `POST /auth/register` | $\color{red}{\text{なし}}$ | $\color{red}{\text{ユーザー名とパスワードで登録。リカバリーコードを一度だけ返す}}$ | 001 |
+| `POST /auth/login` | $\color{red}{\text{なし}}$ | $\color{red}{\text{ログイン。セッション Cookie を発行}}$ | 002 |
+| `POST /auth/logout` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{現在のセッションを削除}}$ | 003 |
+| `POST /auth/recover` | $\color{red}{\text{なし}}$ | $\color{red}{\text{ユーザー名・リカバリーコード・新パスワードで再設定。全セッションを削除し、新しいコードを返す}}$ | 005 |
+| `GET /me` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{自分のプロフィール}}$ | 004 |
+| `PATCH /me` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{表示名・ステータスの変更}}$ | 004 |
+| `PUT /me/avatar` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{アバター画像の差し替え(multipart)。旧ファイルは削除キューへ}}$ | 004 |
+| `GET /users/:userId/avatar` | $\color{red}{\text{requireUser。かつ、本人、または、自分と対象が同じワークスペースに共に active で所属している}}$ | $\color{red}{\text{アバター画像の取得。条件を満たさない場合、対象が存在しない場合、アバターが未設定の場合は、いずれも同じ 404}}$ | 004 |
+
+### 5.2 ワークスペース・招待・メンバー
+
+| メソッド・パス | 認可 | 概要 | FR |
+|---|---|---|---|
+| `GET /workspaces` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{自分が active に所属するワークスペースの一覧。それぞれのメンション数と未読の有無(横断バッジ)を含む}}$ | 206, 207 |
+| `POST /workspaces` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{作成。作成者がオーナーになり、general が作られる}}$ | 201 |
+| `GET /workspaces/:ws` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{ワークスペースの情報}}$ | 206 |
+| `GET /workspaces/:ws/members` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{active なメンバー一覧(表示名・アバター・ステータス)}}$ | 004 |
+| `POST /workspaces/:ws/invitations` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{招待リンクの発行(有効期限・回数を指定)。トークンは、この応答でだけ返す}}$ | 301 |
+| `GET /workspaces/:ws/invitations` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{発行済みリンクの一覧(トークンは返さない)}}$ | 301 |
+| `DELETE /workspaces/:ws/invitations/:id` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{リンクの取り消し(revoked\_at を設定)}}$ | 301 |
+| `GET /invitations/:token` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{受諾前の確認。ワークスペース名と、有効かどうかだけを返す。無効の場合は、理由(存在しない・期限切れ・取り消し・回数超過・kicked)を区別せず、同じ 404 と同じ文言を返す。レート制限の対象(§4.1)}}$ | 301 |
+| `POST /invitations/:token/accept` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{招待の受諾(§3.1 の手順)。参加済みなら成功を返す。失敗は、上記の確認と同じ 404 と同じ文言で、kicked の場合も区別しない。レート制限の対象(§4.1)}}$ | 301 |
+| `POST /workspaces/:ws/members/:userId/kick` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{キック(§2.1 の手順)。WebSocket のルームからも除外する}}$ | 302 |
+| `GET /workspaces/:ws/kicked` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{キック済みユーザーの一覧}}$ | 304 |
+| `DELETE /workspaces/:ws/kicked/:userId` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{キックの解除(Membership の行を削除)}}$ | 304 |
+
+### 5.3 チャンネル・DM
+
+| メソッド・パス | 認可 | 概要 | FR |
+|---|---|---|---|
+| `GET /workspaces/:ws/channels` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{参加中のチャンネル・DM(未読数・メンション数・ミュート状態つき)。query で、未参加のパブリックチャンネルの一覧も取れる}}$ | 203, 401 |
+| `GET /workspaces/:ws/channels/admin` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{全チャンネルの管理一覧。プライベートは名前のみ}}$ | 204, 303 |
+| `POST /workspaces/:ws/channels` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{作成(名前・種別)。作成者は参加者になる}}$ | 202 |
+| `DELETE /channels/:ch` | $\color{red}{\text{チャンネルのワークスペースの active なオーナー。判定順序は §4.4}}$ | $\color{red}{\text{削除。連鎖して配下を削除し、添付は削除キューへ。WebSocket のルームも閉じる}}$ | 303 |
+| `POST /channels/:ch/join` | $\color{red}{\text{requireMember(チャンネルのワークスペース)}}$ | $\color{red}{\text{パブリックチャンネルへの参加。チャンネルが存在しない場合、プライベートの場合、DM の場合は、いずれも同じ 404(存在を隠す)。すでに参加済みなら成功を返す}}$ | 203 |
+| `POST /channels/:ch/leave` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{退出。既定チャンネル(general)と DM は 400(参加者は存在を知っているため、隠す必要がない)}}$ | 203, 204 |
+| `GET /channels/:ch/members` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{参加者の一覧。query で絞り込み(メンション候補に使う)}}$ | 109 |
+| `POST /channels/:ch/members` | $\color{red}{\text{チャンネルの作成者で参加者、またはオーナー。判定の順序と失敗時のステータスは §4.4}}$ | $\color{red}{\text{プライベートチャンネルへの招待(対象ユーザー ID)}}$ | 204 |
+| `PATCH /channels/:ch/me` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{自分のミュート設定}}$ | 403 |
+| `POST /workspaces/:ws/dms` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{相手のユーザー ID を指定して DM を作成。すでにあれば、それを返す。相手は、同じワークスペースの active メンバーのみ。自分自身との DM は、作成できず 400(将来の検討事項)。相手が kicked または他のワークスペースのユーザーの場合は 400}}$ | 102 |
+
+### 5.4 メッセージ
+
+| メソッド・パス | 認可 | 概要 | FR |
+|---|---|---|---|
+| `GET /channels/:ch/messages` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{トップレベルのメッセージを新しい順に取得(返信数、リアクション、添付つき)。cursor で次のページ}}$ | 101, 105 |
+| `POST /channels/:ch/messages` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{投稿。本文のみは JSON、添付つきは multipart。メンションを解析して登録し、WebSocket で配信}}$ | 101, 107, 109 |
+| `GET /messages/:id/replies` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{スレッドの返信を古い順に取得}}$ | 105 |
+| `POST /messages/:id/replies` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{返信の投稿。親はトップレベルのみ。ThreadMember を作成・追加}}$ | 105 |
+| `PATCH /messages/:id` | $\color{red}{\text{requireAuthor}}$ | $\color{red}{\text{本文の編集。edited\_at を設定し、メンションを差分更新}}$ | 103 |
+| `DELETE /messages/:id` | $\color{red}{\text{requireAuthor}}$ | $\color{red}{\text{論理削除(§2.1)。親メッセージなら、返信は残す}}$ | 104 |
+| `PUT /messages/:id/reactions/:emoji` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{リアクションの付与(すでにあれば成功を返す)}}$ | 108 |
+| `DELETE /messages/:id/reactions/:emoji` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{自分のリアクションの解除}}$ | 108 |
+| `GET /attachments/:id` | $\color{red}{\text{添付のチャンネルに requireChannel}}$ | $\color{red}{\text{添付の取得。nosniff を付け、許可形式以外は返さない}}$ | 107 |
+| `GET /workspaces/:ws/search` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{検索(q は 2 文字以上、cursor)。参加チャンネルのみが対象}}$ | 110 |
+
+### 5.5 既読・未読
+
+| メソッド・パス | 認可 | 概要 | FR |
+|---|---|---|---|
+| `POST /channels/:ch/read` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{チャンネルの既読位置を更新(戻さない)。そのチャンネルのトップレベルのメンションを既読にする}}$ | 401 |
+| `POST /messages/:id/thread/read` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{スレッドの既読位置を更新(戻さない)。そのスレッドのメンションを既読にする}}$ | 401, 402 |
+| `GET /workspaces/:ws/threads` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{自分が参加しているスレッドの一覧と、未読の有無(サイドバーの「スレッド」項目)}}$ | 401 |
+
+### 5.6 補足
+
+- $\color{red}{\text{メンションの解析: 本文から、アットマークとユーザー名の並びを取り出し、そのチャンネルの参加者に当てはまる分だけ Mention に登録する。参加者でない名前は、通常の文字として扱い、通知しない(FR-109)。}}$
+- $\color{red}{\text{マークダウン(FR-106)の無害化: サーバーは、本文を入力されたままのマークダウンの文字列として保存し、HTML への変換も無害化の加工もしない。表示するときに、クライアントが react-markdown と rehype-sanitize で変換と無害化を行う。生の HTML は描画しない。そのため、FR-106 に対応する API はない。検索は、変換前の文字列に対して行う。}}$
+- $\color{red}{\text{既読位置は、戻さない。小さい ID で更新しようとしたら、何もしない。}}$
+- $\color{red}{\text{添付とアバターは、拡張子と Content-Type ではなく、ファイル内容で形式を判定する(FR-107)。}}$
+- $\color{red}{\text{ヘルスチェック用に、認証なしの GET /health を設ける。}}$
+
+## 6. 未決事項(設計)
 
 | # | 論点 | 暫定案 |
 |---|---|---|
