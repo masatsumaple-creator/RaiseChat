@@ -319,7 +319,7 @@ $\color{red}{\text{認可は、リクエストのたびに DB で確認する。
 | requireChannel(ch) | $\color{red}{\text{チャンネルが存在し、呼び出し者の ChannelMember の行がある。判定は ChannelMember の行だけで行う(kick 時にそのワークスペースの ChannelMember の行は削除されるため、kicked のユーザーは、行がなく、必ず 404 になる)}}$ | $\color{red}{\text{常に 404(存在しない場合、別のワークスペースの場合、非参加の場合、kicked の場合を区別しない)。403 は返さない}}$ |
 | requireAuthor(msg) | $\color{red}{\text{requireChannel を満たし、メッセージが削除済みでなく、投稿者が本人}}$ | $\color{red}{\text{削除済みなら 404(投稿者以外にも 404)。投稿者以外は 403}}$ |
 
-$\color{red}{\text{ステータスの原則: ワークスペースを指定する API(パスに /workspaces/:ws を含むもの)は、kicked なら 403、Membership の行がなければ 404(FR-302)。チャンネルまたはメッセージを指定する API は、ChannelMember の行がなければ、kicked を含めて 404(存在を隠す)。例外は、参加(join)と、招待リンクの API(§4.4、§5.2)。}}$
+$\color{red}{\text{ステータスの原則: ワークスペースを指定する API(パスに /workspaces/:ws を含むもの)は、kicked なら 403、Membership の行がなければ 404(FR-302)。チャンネルまたはメッセージを指定する API は、ChannelMember の行がなければ、kicked を含めて 404(存在を隠す)。例外は、参加(join)、チャンネル削除、プライベートチャンネルへの招待(いずれも §4.4 に順序を定義)と、招待リンクの API(§5.2)。結合テストでは、これらの例外の各ステータスと、オーナーによる自己追加の 403 を確認する。}}$
 
 メッセージ ID を指定する API(パスが /messages/:id で始まるもの、および添付の取得)は、まず ID からメッセージと、その channel を引き、次の順で認可する。上から順に判定し、最初に当てはまったところで終了する。
 
@@ -339,7 +339,7 @@ $\color{red}{\text{削除済みのメッセージ(deleted\_at が設定されて
 | 招待リンクの受諾 | $\color{red}{\text{requireUser(Membership の確認は §3.1 の手順)}}$ |
 | キック・キック解除 | $\color{red}{\text{requireOwner。対象がオーナー自身なら 400}}$ |
 | チャンネル作成 | $\color{red}{\text{requireMember}}$ |
-| チャンネル削除 | $\color{red}{\text{requireOwner。既定チャンネル(general)と DM は 400}}$ |
+| チャンネル削除 | $\color{red}{\text{active なオーナーのみ。判定の順序と失敗時のステータスは §4.4(既定チャンネル(general)と DM は 400)}}$ |
 | パブリックチャンネルの一覧(未参加のものを含む) | $\color{red}{\text{requireMember}}$ |
 | パブリックチャンネルへの参加 | $\color{red}{\text{requireMember(チャンネルが public であること)}}$ |
 | チャンネルからの退出 | $\color{red}{\text{requireChannel。既定チャンネルと DM は 400}}$ |
@@ -367,6 +367,7 @@ $\color{red}{\text{存在を隠すべき相手(参加者でない人)には 404�
 |---|---|
 | 参加(join) | $\color{red}{\text{(1) チャンネルが存在しない、または呼び出し者がそのチャンネルのワークスペースに Membership の行を持たない、またはチャンネルがプライベート・DM → 404。(2) 呼び出し者が kicked → 403(FR-302。kicked のユーザーは、そのワークスペースのパブリックチャンネルの存在が分かるが、キック前から知り得た情報であり、許容する)。(3) パブリックなら参加する(参加済みなら成功)。}}$ |
 | 退出(leave) | $\color{red}{\text{(1) 参加者でない(存在しない場合、別のワークスペースの場合、kicked の場合を含む) → 404。(2) 既定チャンネルまたは DM → 400。(3) 退出する。}}$ |
+| チャンネル削除 | $\color{red}{\text{(1) チャンネルが存在しない → 404。(2) 呼び出し者が、そのチャンネルのワークスペースの active なオーナーでない場合は、次のとおり。呼び出し者がそのチャンネルの参加者である、または、チャンネルがパブリックで呼び出し者が active メンバーである → 403(存在を知っている)。それ以外(非参加のプライベート・DM、別のワークスペース、kicked) → 404。(3) オーナーで、チャンネルが DM → 参加者なら 400、非参加なら 404(DM の存在を隠す)。(4) 既定チャンネル(general) → 400。(5) 削除する。}}$ |
 | プライベートへの招待 | $\color{red}{\text{(1) チャンネルが存在しない → 404。(2) 呼び出し者が、そのチャンネルの参加者でも、active なオーナーでもない(別のワークスペース、kicked を含む) → 404。(3) 呼び出し者がオーナーで参加者でなく、チャンネルが DM → 404(DM の存在を隠す)。(4) チャンネルが DM またはパブリック → 400。(5) 呼び出し者が、作成者でもオーナーでもない(参加者だけ) → 403。(6) 作成者は、参加者である間だけ有効(退出・キックされると、(5) の対象になる)。(7) 呼び出し者がオーナーで参加者でなく、招待する対象が自分自身 → 403(下記)。(8) 招待する対象が、同じワークスペースの active メンバーでない → 400。(9) 招待する(対象がすでに参加者なら成功)。}}$ |
 
 $\color{red}{\text{オーナーは、参加者でないプライベートチャンネルにも、他のユーザーを追加できる。ただし、自分自身を追加することはできない。管理一覧では名前だけを見せ、内容は見せない方針(FR-204、303)を、オーナーが迂回できないようにするため。内容を見たい場合は、チャンネルの作成者または参加者から招待される必要がある。}}$
@@ -412,7 +413,7 @@ $\color{red}{\text{パスの先頭に /api を付ける。ID は uuid(メッセ�
 | `GET /workspaces/:ws/channels` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{参加中のチャンネル・DM(未読数・メンション数・ミュート状態つき)。query で、未参加のパブリックチャンネルの一覧も取れる}}$ | 203, 401 |
 | `GET /workspaces/:ws/channels/admin` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{全チャンネルの管理一覧。プライベートは名前のみ}}$ | 204, 303 |
 | `POST /workspaces/:ws/channels` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{作成(名前・種別)。作成者は参加者になる}}$ | 202 |
-| `DELETE /channels/:ch` | $\color{red}{\text{requireOwner(チャンネルのワークスペース)}}$ | $\color{red}{\text{削除。連鎖して配下を削除し、添付は削除キューへ。WebSocket のルームも閉じる}}$ | 303 |
+| `DELETE /channels/:ch` | $\color{red}{\text{チャンネルのワークスペースの active なオーナー。判定順序は §4.4}}$ | $\color{red}{\text{削除。連鎖して配下を削除し、添付は削除キューへ。WebSocket のルームも閉じる}}$ | 303 |
 | `POST /channels/:ch/join` | $\color{red}{\text{requireMember(チャンネルのワークスペース)}}$ | $\color{red}{\text{パブリックチャンネルへの参加。チャンネルが存在しない場合、プライベートの場合、DM の場合は、いずれも同じ 404(存在を隠す)。すでに参加済みなら成功を返す}}$ | 203 |
 | `POST /channels/:ch/leave` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{退出。既定チャンネル(general)と DM は 400(参加者は存在を知っているため、隠す必要がない)}}$ | 203, 204 |
 | `GET /channels/:ch/members` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{参加者の一覧。query で絞り込み(メンション候補に使う)}}$ | 109 |
