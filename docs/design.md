@@ -31,7 +31,9 @@
 - $\color{red}{\text{時刻はすべて timestamptz(UTC)で保存する。}}$
 - $\color{red}{\text{ユーザー名は大文字小文字を区別せず一意にする。使える文字は半角英数字とアンダースコア、3〜32 文字。メンション解析を単純にするため。}}$
 - $\color{red}{\text{スレッドは 1 段のみ。返信に対する返信はできず、常に親メッセージ(トップレベル)にぶら下がる。}}$
-- $\color{red}{\text{メッセージの本文の上限は 4000 文字。}}$
+- $\color{red}{\text{メッセージの本文の上限は 4000 文字。文字数は、DB の char\_length と同じコードポイント数で数える。zod 側は、UTF-16 の長さではなく、コードポイント数で検証する(絵文字で DB の CHECK と食い違わないため)。display\_name など他の長さ制限も同様。}}$
+- $\color{red}{\text{メッセージの採番(IDENTITY)はコミット順と一致しないため、既読位置の比較で取りこぼしが起こり得る。これを防ぐため、メッセージの挿入は、チャンネル単位の advisory lock(pg\_advisory\_xact\_lock)を取ってから行い、同じチャンネル内の採番順とコミット順を一致させる。}}$
+- $\color{red}{\text{キックは、そのワークスペースだけに効く。セッションはユーザー単位でグローバルなので、他のワークスペースのセッションは失効させない。遮断は、WebSocket のルームからの除外と、REST のリクエストごとの所属確認で行う(§2.1)。}}$
 - $\color{red}{\text{ログイン試行・パスワード再設定のレート制限は、単一プロセスのためメモリ上で管理する。再起動でリセットされることを許容する。}}$
 - $\color{red}{\text{ストレージ上の実体の削除は、DB のトリガで StorageDeletion に積む。チャンネル削除の連鎖削除(CASCADE)でも、取りこぼしが起きないようにするため。}}$
 
@@ -55,7 +57,7 @@ CREATE TABLE users (
 );
 CREATE UNIQUE INDEX users_username_lower_key ON users (lower(username));
 
--- セッション(トークンはハッシュで保存。キック・再設定時に user_id で一括削除)
+-- セッション(トークンはハッシュで保存。パスワード再設定時に user_id で一括削除。キックでは削除しない)
 CREATE TABLE sessions (
   token_hash  text PRIMARY KEY,
   user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -81,6 +83,8 @@ CREATE TABLE memberships (
   joined_at    timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (workspace_id, user_id)
 );
+-- オーナーは各ワークスペースに 1 人。workspaces.owner_id と一致させる(作成時に同じトランザクションで入れる)
+CREATE UNIQUE INDEX memberships_one_owner_key ON memberships (workspace_id) WHERE role = 'owner';
 CREATE INDEX memberships_user_id_idx ON memberships (user_id);
 
 -- 招待リンク(FR-301)。max_uses が null なら無制限
@@ -130,12 +134,15 @@ CREATE TABLE messages (
   id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   channel_id  uuid NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
   user_id     uuid NOT NULL REFERENCES users(id),
-  parent_id   bigint REFERENCES messages(id) ON DELETE CASCADE,
+  parent_id   bigint,
   body        text CHECK (char_length(body) <= 4000),   -- 削除時は null(FR-104)
   created_at  timestamptz NOT NULL DEFAULT now(),
   edited_at   timestamptz,
   deleted_at  timestamptz,
-  CHECK ((deleted_at IS NULL) = (body IS NOT NULL))
+  CHECK ((deleted_at IS NULL) = (body IS NOT NULL)),
+  -- 親が同じチャンネルのメッセージであることを DB で保証する(複合外部キー)
+  UNIQUE (id, channel_id),
+  FOREIGN KEY (parent_id, channel_id) REFERENCES messages (id, channel_id) ON DELETE CASCADE
 );
 -- チャンネルの履歴(トップレベル)
 CREATE INDEX messages_channel_top_idx ON messages (channel_id, id DESC) WHERE parent_id IS NULL;
@@ -175,13 +182,15 @@ CREATE TABLE reactions (
   PRIMARY KEY (message_id, user_id, emoji)
 );
 
--- メンション(FR-109)。メッセージ編集時は作り直す
+-- メンション(FR-109)。メッセージ編集時は、既読済みの行を残して差分だけ作り直す
+-- read_at は、既読位置とは独立して消し込む(スレッド非参加者へのメンションにも対応するため)
 CREATE TABLE mentions (
   message_id  bigint NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   user_id     uuid NOT NULL REFERENCES users(id),
+  read_at     timestamptz,
   PRIMARY KEY (message_id, user_id)
 );
-CREATE INDEX mentions_user_id_idx ON mentions (user_id);
+CREATE INDEX mentions_unread_idx ON mentions (user_id) WHERE read_at IS NULL;
 
 -- 添付実体の削除キュー(§9 #8)
 CREATE TABLE storage_deletions (
@@ -208,31 +217,49 @@ CREATE TRIGGER attachments_enqueue_deletion
 
 ### 2.1 スキーマの補足
 
-- $\color{red}{\text{スレッドが 1 段であること(返信の親が、トップレベルのメッセージであること)は、CHECK で表せないため、アプリ側で検証する。親が別チャンネルのメッセージでないことも同様。}}$
+- $\color{red}{\text{スレッドが 1 段であること(返信の親が、トップレベルのメッセージであること)は、CHECK で表せないため、アプリ側で検証する。親が別チャンネルのメッセージでないことは、複合外部キーで DB が保証する。}}$
 - $\color{red}{\text{メッセージの論理削除(FR-104)では、本文を null にして deleted\_at を設定し、リアクション・メンションの行と、添付の行を削除する(添付の削除でトリガが働く)。}}$
-- $\color{red}{\text{キック(FR-302)では、アプリ側で 1 つのトランザクションにまとめる: Membership を kicked にする、そのユーザーの ChannelMember と ThreadMember を、このワークスペースの分だけ削除する、セッションを失効させる。}}$
+- $\color{red}{\text{キック(FR-302)では、アプリ側で 1 つのトランザクションにまとめる: Membership を kicked にする、そのユーザーの ChannelMember と ThreadMember を、このワークスペースの分だけ削除する。セッションは削除しない。キックはそのワークスペースだけに効き、他のワークスペースのセッションと操作には影響しない。遮断は、(1) WebSocket で、そのワークスペースのルームから除外してイベントを送らず、再参加も拒否する、(2) REST で、リクエストごとの所属確認(status が active)により 403 にする、の 2 つで行う。}}$
+- $\color{red}{\text{オーナーはキックできない(FR-302)。キックの更新処理で、対象がオーナーでないことを確認する(テスト項目に含める)。}}$
+- $\color{red}{\text{パスワード再設定(FR-005)では、そのユーザーの全セッションを削除する。}}$
 - $\color{red}{\text{キック解除(FR-304)は、kicked の Membership の行を削除する。}}$
 - $\color{red}{\text{DM(FR-102)は type が dm のチャンネルで、dm\_key で同じ 2 人の重複作成を防ぐ。2 人の ChannelMember の行を、作成時に作る。}}$
 - $\color{red}{\text{チャンネルのミュートや既読位置は、ワークスペースを超えない(チャンネルが属するワークスペース内で完結する)。}}$
 - $\color{red}{\text{チャンネル削除(FR-303)は、チャンネルの行を削除すると、ChannelMember・メッセージ・返信・ThreadMember・リアクション・メンション・添付が連鎖して消え、添付の分はトリガにより StorageDeletion に積まれる。}}$
 - $\color{red}{\text{ワークスペースの削除は MVP 対象外(§9 #4)のため、ワークスペースから Membership・Invitation・Channel への連鎖は、将来のために設定してある。}}$
+- $\color{red}{\text{アバター画像の差し替え時(FR-004)は、同じトランザクションで、旧ファイルの storage\_key を StorageDeletion に積む。添付と同じ削除キューで扱う。}}$
+- $\color{red}{\text{オーナーは、Workspace.owner\_id と、role が owner の Membership の 2 か所で表す。作成時に同じトランザクションで両方を入れる。Membership 側には、1 ワークスペースにつき 1 人の一意制約がある。}}$
 
 ## 3. 主要クエリの方針
 
 $\color{red}{\text{実装時の取り違えを防ぐため、要件定義書の基準に関わるクエリの条件を示す。}}$
 
+### 3.1 招待リンクの受諾(FR-301、FR-302)
+
+$\color{red}{\text{次の順序で、1 つのトランザクションで行う。順序を変えない。}}$
+
+1. $\color{red}{\text{トークンのハッシュで招待の行を読み、存在と有効(取り消されていない、期限内)を確認して、workspace\_id を得る。無効なら失敗。}}$
+2. $\color{red}{\text{Membership を、ON CONFLICT DO NOTHING で挿入する(role は member、status は active)。}}$
+3. $\color{red}{\text{挿入できなかった場合(すでに行がある)は、既存の status を見る。kicked なら失敗(再参加不可)。active なら何もせず成功で終了する(使用回数は増やさない)。}}$
+4. $\color{red}{\text{挿入できた場合のみ、下記の条件付き更新で使用回数を消費する。更新が 0 件ならロールバックする(上限に達した)。}}$
+5. $\color{red}{\text{既定チャンネル(general)の ChannelMember を挿入する。}}$
+
+$\color{red}{\text{同時に受諾されても、条件付き更新により上限を超えない。確認と挿入の間にキックが入っても、Membership の主キーの競合により、kicked の行があれば再参加できない。結合テストで、同時受諾と、kicked の再参加の両方を確認する。}}$
+
 ```sql
--- 招待リンクの受諾(原子的に使用回数を消費。FR-301)。更新できた行が 0 件なら無効
+-- 手順 4: 使用回数の原子的な消費。更新できた行が 0 件なら上限超過など
 UPDATE invitations
    SET used_count = used_count + 1
- WHERE token_hash = $1
+ WHERE id = $invitation_id
    AND revoked_at IS NULL
    AND expires_at > now()
    AND (max_uses IS NULL OR used_count < max_uses)
 RETURNING workspace_id;
--- 上記の前に、受諾するユーザーが kicked でないことを確認する(FR-302)。
--- 同じトランザクション内で行い、参加済みなら used_count を増やさないようにする。
+```
 
+### 3.2 未読数・メンション数(FR-401、FR-402、FR-207)
+
+```sql
 -- チャンネルの未読数(トップレベルのみ。FR-401)
 SELECT count(*)
   FROM messages m
@@ -243,23 +270,40 @@ SELECT count(*)
    AND m.user_id <> $me
    AND m.id > cm.last_read_message_id;
 
--- 検索(FR-110)。$term は \ → % → _ の順にエスケープ済みで、2 文字以上
+-- 未読のメンション数(ワークスペース単位。ミュート中のチャンネルも数える。FR-207)
+SELECT count(*)
+  FROM mentions mn
+  JOIN messages m ON m.id = mn.message_id AND m.deleted_at IS NULL
+  JOIN channels c ON c.id = m.channel_id AND c.workspace_id = $ws
+  JOIN channel_members cm ON cm.channel_id = c.id AND cm.user_id = $me
+ WHERE mn.user_id = $me
+   AND mn.read_at IS NULL;
+```
+
+$\color{red}{\text{メンションの既読は、既読位置とは独立して消し込む。チャンネルを開いたとき、そのチャンネルのトップレベルのメンションの read\_at を更新する。スレッドパネルを開いたとき、そのスレッドの返信内のメンションの read\_at を更新する。スレッドに参加していなくても、メンションを受けた人は、スレッドを開くまで未読として数えられる(FR-402)。}}$
+
+### 3.3 検索(FR-110)
+
+```sql
+-- $term は \ → % → _ の順にエスケープ済みで、2 文字以上。$cursor は前のページの最後の id(最初は null)
 SELECT m.*
   FROM messages m
-  JOIN channel_members cm ON cm.channel_id = m.channel_id AND cm.user_id = $me
+  JOIN channels c ON c.id = m.channel_id AND c.workspace_id = $ws
+  JOIN channel_members cm ON cm.channel_id = c.id AND cm.user_id = $me
  WHERE m.deleted_at IS NULL
    AND m.body ILIKE '%' || $term || '%' ESCAPE '\'
+   AND ($cursor IS NULL OR m.id < $cursor)
  ORDER BY m.id DESC
  LIMIT 50;
 ```
 
-$\color{red}{\text{検索では、参加チャンネルの結合により、権限外のチャンネルと DM が結果に入らない。ワークスペースを指定して検索する(他のワークスペースの結果は混ぜない)。}}$
+$\color{red}{\text{検索では、参加チャンネルの結合により、権限外のチャンネルと DM が結果に入らない。ワークスペースを指定して検索し、他のワークスペースの結果は混ぜない。ESCAPE の前提は standard\_conforming\_strings がオン(PostgreSQL 16 の既定)。結合テストで、バックスラッシュ・パーセント・アンダースコアを含む語を確認する。}}$
 
 ## 4. 未決事項(設計)
 
 | # | 論点 | 暫定案 |
 |---|---|---|
-| D1 | セッションの有効期限 | $\color{red}{\text{30 日。アクセスのたびに延長しない(固定期限)}}$ |
+| D1 | セッションの有効期限 | $\color{red}{\text{30 日。アクセスのたびに延長しない(固定期限)。30 日ごとに再ログインが必要になることを、仕様として受け入れる}}$ |
 | D2 | 添付の保存先の構造 | $\color{red}{\text{storage\_key は、ワークスペース ID、日付、uuid の順のパスにする}}$ |
 | D3 | メッセージ編集の履歴 | $\color{red}{\text{保存しない(edited\_at のみ)}}$ |
 | D4 | 絵文字の種類 | $\color{red}{\text{Unicode 絵文字のみ(カスタム絵文字は対象外)}}$ |
