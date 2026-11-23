@@ -339,12 +339,25 @@ $\color{red}{\text{認可は、リクエストのたびに DB で確認する。
 | リアクションの付与・解除 | $\color{red}{\text{requireChannel(自分の分だけ)}}$ |
 | 添付ファイルの取得 | $\color{red}{\text{添付が属するメッセージのチャンネルに対する requireChannel。削除済みメッセージの添付は 404}}$ |
 | プロフィールの変更 | $\color{red}{\text{requireUser(自分のみ)}}$ |
+| 他ユーザーのアバターの取得 | $\color{red}{\text{requireUser。かつ、本人、または、同じワークスペースに共に active で所属している(それ以外は 404)}}$ |
 
 ### 4.3 エラーの方針
 
 - $\color{red}{\text{エラー形式は、HTTP ステータスと、code と message を持つ JSON。message には、内部情報や存在の有無を含めない。}}$
 - $\color{red}{\text{存在を隠す対象(非所属のワークスペース、非参加のプライベートチャンネル)は、権限がない場合も存在しない場合も同じ 404 を返す。}}$
 - $\color{red}{\text{ログイン・パスワード再設定の失敗は、理由を特定しない同一の文言で、同等の処理時間にする(FR-002、FR-005)。}}$
+
+### 4.4 チャンネルを指定する操作の失敗時のステータス
+
+$\color{red}{\text{存在を隠すべき相手(参加者でない人)には 404、存在を知っている相手(参加者)には、理由が分かるステータスを返す。次の順序で判定する。}}$
+
+| 操作 | 判定の順序と結果 |
+|---|---|
+| 参加(join) | $\color{red}{\text{(1) チャンネルが存在しない、または別のワークスペースのもの、またはプライベート・DM → 404。(2) 呼び出し者が kicked → 403。(3) パブリックなら参加(参加済みなら成功)。}}$ |
+| 退出(leave) | $\color{red}{\text{(1) 参加者でない(存在しない場合を含む) → 404。(2) 既定チャンネルまたは DM → 400。(3) 退出する。}}$ |
+| プライベートへの招待 | $\color{red}{\text{(1) チャンネルが存在しない、または別のワークスペースのもの → 404。(2) 呼び出し者が参加者でもオーナーでもない → 404。(3) 呼び出し者がオーナーで参加者でなく、チャンネルが DM → 404(DM の存在を隠す)。(4) チャンネルが DM またはパブリック → 400。(5) 呼び出し者が、作成者でもオーナーでもない(参加者だけ) → 403。(6) 作成者は、参加者である間だけ有効(退出・キックされると、(5) の対象になる)。(7) 招待する対象が、同じワークスペースの active メンバーでない → 400。(8) 招待する。}}$ |
+
+$\color{red}{\text{オーナーは、参加者でないプライベートチャンネルにも、ユーザー(自分を含む)を追加できる。管理一覧では内容を見せないが、オーナーが自分を追加すれば内容を見られる。その場合、オーナーが参加者になったことは、チャンネルの参加者一覧から他の参加者にも分かる。これを、オーナーの管理者権限の範囲として許容する。}}$
 
 ## 5. REST API 一覧
 
@@ -361,7 +374,7 @@ $\color{red}{\text{パスの先頭に /api を付ける。ID は uuid(メッセ�
 | `GET /me` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{自分のプロフィール}}$ | 004 |
 | `PATCH /me` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{表示名・ステータスの変更}}$ | 004 |
 | `PUT /me/avatar` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{アバター画像の差し替え(multipart)。旧ファイルは削除キューへ}}$ | 004 |
-| `GET /users/:userId/avatar` | $\color{red}{\text{requireUser}}$ | $\color{red}{\text{アバター画像の取得}}$ | 004 |
+| `GET /users/:userId/avatar` | $\color{red}{\text{requireUser。かつ、本人、または、自分と対象が同じワークスペースに共に active で所属している}}$ | $\color{red}{\text{アバター画像の取得。条件を満たさない場合、対象が存在しない場合、アバターが未設定の場合は、いずれも同じ 404}}$ | 004 |
 
 ### 5.2 ワークスペース・招待・メンバー
 
@@ -388,10 +401,10 @@ $\color{red}{\text{パスの先頭に /api を付ける。ID は uuid(メッセ�
 | `GET /workspaces/:ws/channels/admin` | $\color{red}{\text{requireOwner}}$ | $\color{red}{\text{全チャンネルの管理一覧。プライベートは名前のみ}}$ | 204, 303 |
 | `POST /workspaces/:ws/channels` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{作成(名前・種別)。作成者は参加者になる}}$ | 202 |
 | `DELETE /channels/:ch` | $\color{red}{\text{requireOwner(チャンネルのワークスペース)}}$ | $\color{red}{\text{削除。連鎖して配下を削除し、添付は削除キューへ。WebSocket のルームも閉じる}}$ | 303 |
-| `POST /channels/:ch/join` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{パブリックチャンネルへの参加}}$ | 203 |
-| `POST /channels/:ch/leave` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{退出}}$ | 203, 204 |
+| `POST /channels/:ch/join` | $\color{red}{\text{requireMember(チャンネルのワークスペース)}}$ | $\color{red}{\text{パブリックチャンネルへの参加。チャンネルが存在しない場合、プライベートの場合、DM の場合は、いずれも同じ 404(存在を隠す)。すでに参加済みなら成功を返す}}$ | 203 |
+| `POST /channels/:ch/leave` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{退出。既定チャンネル(general)と DM は 400(参加者は存在を知っているため、隠す必要がない)}}$ | 203, 204 |
 | `GET /channels/:ch/members` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{参加者の一覧。query で絞り込み(メンション候補に使う)}}$ | 109 |
-| `POST /channels/:ch/members` | $\color{red}{\text{作成者で参加者、またはオーナー}}$ | $\color{red}{\text{プライベートチャンネルへの招待(対象ユーザー ID)}}$ | 204 |
+| `POST /channels/:ch/members` | $\color{red}{\text{チャンネルの作成者で参加者、またはオーナー。判定の順序と失敗時のステータスは §4.4}}$ | $\color{red}{\text{プライベートチャンネルへの招待(対象ユーザー ID)}}$ | 204 |
 | `PATCH /channels/:ch/me` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{自分のミュート設定}}$ | 403 |
 | `POST /workspaces/:ws/dms` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{相手のユーザー ID を指定して DM を作成。すでにあれば、それを返す。相手は、同じワークスペースの active メンバーのみ}}$ | 102 |
 
