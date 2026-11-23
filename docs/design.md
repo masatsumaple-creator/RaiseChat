@@ -319,6 +319,14 @@ $\color{red}{\text{認可は、リクエストのたびに DB で確認する。
 | requireChannel(ch) | $\color{red}{\text{チャンネルが存在し、requireMember(そのチャンネルのワークスペース)を満たし、ChannelMember の行がある}}$ | $\color{red}{\text{存在しない・行がない・プライベートで非参加は 404(存在を隠す)}}$ |
 | requireAuthor(msg) | $\color{red}{\text{requireChannel を満たし、メッセージの投稿者が本人で、削除済みでない}}$ | $\color{red}{\text{投稿者以外は 403}}$ |
 
+メッセージ ID を指定する API(パスが /messages/:id で始まるもの、および添付の取得)は、まず ID からメッセージと、その channel を引き、次の順で認可する。
+
+1. $\color{red}{\text{メッセージが存在しない場合は 404。}}$
+2. $\color{red}{\text{そのチャンネルに対する requireChannel を満たさない場合は 404(別のワークスペース、非参加のプライベートチャンネル、他人の DM を含む。存在を隠す)。}}$
+3. $\color{red}{\text{編集・削除の場合は、さらに requireAuthor(投稿者以外は 403)。}}$
+
+$\color{red}{\text{削除済みのメッセージ(deleted\_at が設定されている)への操作は、次のとおり。(1) 編集・リアクションの付与・新しい返信の投稿は、404。(2) リアクションの解除と、再度の削除は、すでに無効なので、404。(3) 既存の返信の取得と閲覧は、スレッドが「削除されました」の親の下に残る(FR-105)ため、可能。}}$
+
 ### 4.2 権限マトリクス(要件定義書 §3 の具体化)
 
 | 操作 | ガード |
@@ -334,7 +342,8 @@ $\color{red}{\text{認可は、リクエストのたびに DB で確認する。
 | チャンネルからの退出 | $\color{red}{\text{requireChannel。既定チャンネルと DM は 400}}$ |
 | プライベートチャンネルへの招待 | $\color{red}{\text{作成者(Channel.created\_by)で、かつ参加者、またはオーナー。対象は、同じワークスペースの active メンバーのみ}}$ |
 | チャンネル管理一覧(プライベートの名前を含む) | $\color{red}{\text{requireOwner}}$ |
-| メッセージの閲覧・投稿・検索 | $\color{red}{\text{requireChannel(検索は参加チャンネルのみが対象)}}$ |
+| メッセージの閲覧・投稿 | $\color{red}{\text{requireChannel}}$ |
+| メッセージの検索 | $\color{red}{\text{requireMember。結果は、自分が参加しているチャンネルと DM のみ(§3.3 の結合で絞る)}}$ |
 | メッセージの編集・削除 | $\color{red}{\text{requireAuthor}}$ |
 | リアクションの付与・解除 | $\color{red}{\text{requireChannel(自分の分だけ)}}$ |
 | 添付ファイルの取得 | $\color{red}{\text{添付が属するメッセージのチャンネルに対する requireChannel。削除済みメッセージの添付は 404}}$ |
@@ -406,7 +415,7 @@ $\color{red}{\text{パスの先頭に /api を付ける。ID は uuid(メッセ�
 | `GET /channels/:ch/members` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{参加者の一覧。query で絞り込み(メンション候補に使う)}}$ | 109 |
 | `POST /channels/:ch/members` | $\color{red}{\text{チャンネルの作成者で参加者、またはオーナー。判定の順序と失敗時のステータスは §4.4}}$ | $\color{red}{\text{プライベートチャンネルへの招待(対象ユーザー ID)}}$ | 204 |
 | `PATCH /channels/:ch/me` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{自分のミュート設定}}$ | 403 |
-| `POST /workspaces/:ws/dms` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{相手のユーザー ID を指定して DM を作成。すでにあれば、それを返す。相手は、同じワークスペースの active メンバーのみ}}$ | 102 |
+| `POST /workspaces/:ws/dms` | $\color{red}{\text{requireMember}}$ | $\color{red}{\text{相手のユーザー ID を指定して DM を作成。すでにあれば、それを返す。相手は、同じワークスペースの active メンバーのみ。自分自身との DM は、作成できず 400(将来の検討事項)。相手が kicked または他のワークスペースのユーザーの場合は 400}}$ | 102 |
 
 ### 5.4 メッセージ
 
@@ -434,6 +443,7 @@ $\color{red}{\text{パスの先頭に /api を付ける。ID は uuid(メッセ�
 ### 5.6 補足
 
 - $\color{red}{\text{メンションの解析: 本文から、アットマークとユーザー名の並びを取り出し、そのチャンネルの参加者に当てはまる分だけ Mention に登録する。参加者でない名前は、通常の文字として扱い、通知しない(FR-109)。}}$
+- $\color{red}{\text{マークダウン(FR-106)の無害化: サーバーは、本文を入力されたままのマークダウンの文字列として保存し、HTML への変換も無害化の加工もしない。表示するときに、クライアントが react-markdown と rehype-sanitize で変換と無害化を行う。生の HTML は描画しない。そのため、FR-106 に対応する API はない。検索は、変換前の文字列に対して行う。}}$
 - $\color{red}{\text{既読位置は、戻さない。小さい ID で更新しようとしたら、何もしない。}}$
 - $\color{red}{\text{添付とアバターは、拡張子と Content-Type ではなく、ファイル内容で形式を判定する(FR-107)。}}$
 - $\color{red}{\text{ヘルスチェック用に、認証なしの GET /health を設ける。}}$
