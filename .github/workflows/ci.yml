@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # 結合テスト(実 DB)用の PostgreSQL。設計書 §1 のとおり 16 を使う
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: raisechat
+          POSTGRES_PASSWORD: raisechat
+          POSTGRES_DB: raisechat_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U raisechat -d raisechat_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://raisechat:raisechat@localhost:5432/raisechat_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm のバージョンは package.json の packageManager から読む
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
