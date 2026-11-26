@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app';
@@ -130,7 +130,11 @@ describe('POST /api/auth/register', () => {
     );
     const statuses = results.map((r) => r.statusCode).sort();
     expect(statuses).toEqual([201, 409, 409, 409, 409]);
-    const rows = await testDb.db.select().from(users).where(eq(users.displayName, username));
+    // 勝ったのが、元の綴りか、大文字の綴りかは、決まらない。大文字小文字を区別せずに、数える
+    const rows = await testDb.db
+      .select()
+      .from(users)
+      .where(eq(sql`lower(${users.username})`, username.toLowerCase()));
     expect(rows).toHaveLength(1);
   });
 
