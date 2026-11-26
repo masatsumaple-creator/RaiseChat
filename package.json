@@ -8,7 +8,7 @@
   },
   "scripts": {
     "lint": "eslint .",
-    "typecheck": "tsc -p apps/server/tsconfig.json && tsc -p apps/web/tsconfig.json && tsc -p packages/shared/tsconfig.json",
+    "typecheck": "tsc -p apps/server/tsconfig.json && tsc -p apps/web/tsconfig.json && tsc -p packages/shared/tsconfig.json && tsc -p e2e/tsconfig.json",
     "test": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -17,10 +17,13 @@
     "db:generate": "pnpm --filter @raisechat/server db:generate",
     "db:migrate": "pnpm --filter @raisechat/server db:migrate",
     "dev:server": "pnpm --filter @raisechat/server dev",
-    "dev:web": "pnpm --filter @raisechat/web dev"
+    "dev:web": "pnpm --filter @raisechat/web dev",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^22.20.7",
     "eslint": "^10.15.0",
     "globals": "^17.14.0",
     "prettier": "^3.10.1",

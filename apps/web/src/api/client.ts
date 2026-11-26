@@ -11,6 +11,11 @@ export class ApiError extends Error {
   }
 }
 
+/** 画面に出す、エラーの文言。ApiError 以外(想定外の例外)は、内容を出さず、定型文にする */
+export function errorMessage(error: unknown): string {
+  return error instanceof ApiError ? error.message : '予期しないエラーが発生しました。';
+}
+
 export interface ApiRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   /** JSON で送る本文 */
