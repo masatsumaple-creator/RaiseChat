@@ -107,10 +107,10 @@ const upload = (
     },
   ]);
 
-function getAvatar(app: FastifyInstance, token: string | undefined, userId: string) {
+function getAvatar(app: FastifyInstance, token: string | undefined, userId: string, query = '') {
   return app.inject({
     method: 'GET',
-    url: `/api/users/${userId}/avatar`,
+    url: `/api/users/${userId}/avatar${query}`,
     cookies: token ? { [SESSION_COOKIE_NAME]: token } : {},
   });
 }
@@ -260,10 +260,32 @@ describe('PUT /api/me/avatar(FR-004)', () => {
     const app = makeApp();
     const { token, id } = await createUser(app);
     await upload(app, token, fileOfSize(PNG_HEADER, 100));
-    const got = await getAvatar(app, token, id);
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      cookies: { [SESSION_COOKIE_NAME]: token },
+    });
+    // 現在の版(?v=)つきの URL だけ、長くキャッシュさせる
+    const got = await getAvatar(
+      app,
+      token,
+      id,
+      `?v=${new URL(me.json().avatarUrl, 'http://x').searchParams.get('v')}`,
+    );
     expect(got.headers['x-content-type-options']).toBe('nosniff');
     expect(got.headers['content-security-policy']).toBe("default-src 'none'; sandbox");
     expect(got.headers['cache-control']).toBe('private, max-age=31536000, immutable');
+  });
+
+  it('版がない・古い版の URL は、長くキャッシュさせない(差し替え後に、古い画像を返し続けないため)', async () => {
+    const app = makeApp();
+    const { token, id } = await createUser(app);
+    await upload(app, token, fileOfSize(PNG_HEADER, 100));
+    for (const query of ['', '?v=old-version']) {
+      const got = await getAvatar(app, token, id, query);
+      expect(got.statusCode).toBe(200);
+      expect(got.headers['cache-control']).toBe('private, no-cache');
+    }
   });
 
   it('GET /me の avatarUrl も、アップロード後に更新される', async () => {
@@ -482,8 +504,8 @@ describe('アバターの差し替えと、旧ファイルの削除(FR-004)', ()
   });
 });
 
-describe('GET /api/users/:userId/avatar(フェーズ 1 は本人のみ)', () => {
-  it('他のユーザーのアバターは、存在しても 404', async () => {
+describe('GET /api/users/:userId/avatar(本人のみ。他のユーザーは、workspaces.test.ts で確認)', () => {
+  it('共通のワークスペースのない他のユーザーのアバターは、存在しても 404', async () => {
     const app = makeApp();
     const a = await createUser(app);
     const b = await createUser(app);

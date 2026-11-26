@@ -16,6 +16,11 @@ export function avatarVersion(avatarKey: string): string {
   return name.slice(0, name.lastIndexOf('.'));
 }
 
+/** アバター取得 API のパス(版つき)。未設定なら null。差し替えた後に、古い画像がキャッシュから表示されないよう、版(?v=)を付ける */
+export function avatarUrlFor(userId: string, avatarKey: string | null): string | null {
+  return avatarKey ? `/api/users/${userId}/avatar?v=${avatarVersion(avatarKey)}` : null;
+}
+
 /**
  * アバターを差し替える(FR-004)。
  * 1. 新しいファイルを保存する。

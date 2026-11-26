@@ -8,7 +8,7 @@ import { sessions, users } from '../db/schema';
 import { authOf, requireUser } from '../auth/guards';
 import { hashSecret, verifyAgainstDummy, verifySecret } from '../auth/password';
 import { createSession, type SessionUser } from '../auth/sessions';
-import { avatarVersion } from '../profile/avatar';
+import { avatarUrlFor } from '../profile/avatar';
 import { generateRecoveryCode, normalizeRecoveryCode } from '../auth/tokens';
 import { AppError, parseWith } from '../errors';
 import { rateLimitedError, rateLimitGuard, type RateLimiter } from '../rate-limit';
@@ -36,10 +36,7 @@ export function toMe(user: SessionUser): MeResponse {
     username: user.username,
     displayName: user.displayName,
     statusText: user.statusText,
-    // 版(?v=)を付けて、差し替えた後に、古い画像がキャッシュから表示されないようにする
-    avatarUrl: user.avatarKey
-      ? `/api/users/${user.id}/avatar?v=${avatarVersion(user.avatarKey)}`
-      : null,
+    avatarUrl: avatarUrlFor(user.id, user.avatarKey),
   };
 }
 

@@ -8,7 +8,8 @@ import type { Config } from '../config';
 import type { Db } from '../db/client';
 import { users } from '../db/schema';
 import { AppError, parseWith } from '../errors';
-import { replaceAvatar } from '../profile/avatar';
+import { avatarVersion, replaceAvatar } from '../profile/avatar';
+import { sharesActiveWorkspace } from '../workspaces/membership';
 import { detectImageType, mimeFromExt } from '../storage/image-type';
 import type { Storage } from '../storage/storage';
 import { toMe } from './auth';
@@ -100,28 +101,45 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileRouteDe
     },
   );
 
-  // FR-004: アバター画像の取得。
-  // フェーズ 1 は、本人のみ。他のユーザーには、フェーズ 2 で、同じワークスペースの条件を加える(設計書 §5.1)。
+  // FR-004: アバター画像の取得。本人、または、自分と対象が、同じワークスペースに共に active で所属している場合だけ(設計書 §5.1)。
   // 条件を満たさない・存在しない・未設定は、いずれも同じ 404。
-  app.get<{ Params: { userId: string } }>(
+  app.get<{ Params: { userId: string }; Querystring: { v?: string } }>(
     '/api/users/:userId/avatar',
     { preHandler: requireUser(db) },
     async (request, reply) => {
       const notFound = () => new AppError(404, 'not_found', '見つかりません。');
 
       const parsed = userIdSchema.safeParse(request.params.userId);
+      if (!parsed.success) throw notFound();
       const me = authOf(request).user;
-      if (!parsed.success || parsed.data !== me.id || !me.avatarKey) throw notFound();
 
-      const data = await storage.get(me.avatarKey);
-      const mime = mimeFromExt(me.avatarKey.slice(me.avatarKey.lastIndexOf('.') + 1));
+      let avatarKey: string | null;
+      if (parsed.data === me.id) {
+        avatarKey = me.avatarKey;
+      } else {
+        if (!(await sharesActiveWorkspace(db, me.id, parsed.data))) throw notFound();
+        const [target] = await db
+          .select({ avatarKey: users.avatarKey })
+          .from(users)
+          .where(eq(users.id, parsed.data));
+        avatarKey = target?.avatarKey ?? null;
+      }
+      if (!avatarKey) throw notFound();
+
+      const data = await storage.get(avatarKey);
+      const mime = mimeFromExt(avatarKey.slice(avatarKey.lastIndexOf('.') + 1));
       if (!data || !mime) throw notFound();
 
+      // 版(?v=)が、現在のものと一致するときだけ、長くキャッシュさせる(内容が変わらないため)。
+      // 版がない・古い URL は、毎回、確認させる(差し替えや、共通の所属がなくなった後に、古い画像を返し続けないため)
+      const current = request.query.v === avatarVersion(avatarKey);
       return (
         reply
           .header('content-type', mime)
-          // URL に版(?v=)が付くので、同じ URL の内容は変わらない。ブラウザだけに、キャッシュさせる
-          .header('cache-control', 'private, max-age=31536000, immutable')
+          .header(
+            'cache-control',
+            current ? 'private, max-age=31536000, immutable' : 'private, no-cache',
+          )
           // 画像として以外の解釈を、さらに防ぐ(nosniff は、全応答に付く)
           .header('content-security-policy', "default-src 'none'; sandbox")
           .send(data)

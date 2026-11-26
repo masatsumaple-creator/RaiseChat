@@ -1,7 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDatabase } from '../test/db';
-import { memberships, sessions, storageDeletions, users, workspaces } from './schema';
+import {
+  channelMembers,
+  channels,
+  memberships,
+  sessions,
+  storageDeletions,
+  users,
+  workspaces,
+} from './schema';
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>;
 
@@ -55,7 +63,7 @@ const CHECK_VIOLATION = '23514';
 const FOREIGN_KEY_VIOLATION = '23503';
 
 describe('マイグレーション', () => {
-  it('空の DB に適用でき、フェーズ 1 のテーブルができる', async () => {
+  it('空の DB に適用でき、テーブルができる', async () => {
     const rows = await testDb.db.execute<{ table_name: string }>(
       sql`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name`,
     );
@@ -67,6 +75,8 @@ describe('マイグレーション', () => {
         'workspaces',
         'memberships',
         'storage_deletions',
+        'channels',
+        'channel_members',
       ]),
     );
   });
@@ -305,5 +315,75 @@ describe('storage_deletions', () => {
       .returning();
     expect(row?.deletedAt).toBeNull();
     expect(row?.retryCount).toBe(0);
+  });
+});
+
+describe('channels / channel_members(FR-202, FR-203)', () => {
+  async function newChannel(
+    workspaceId: string,
+    values: Partial<typeof channels.$inferInsert> = {},
+  ) {
+    return testDb.db
+      .insert(channels)
+      .values({ workspaceId, type: 'public', name: 'random', ...values })
+      .returning();
+  }
+
+  it('名前は、同一ワークスペース内で、大文字小文字を区別せず一意。別のワークスペースなら同じ名前でよい', async () => {
+    const owner = await createUser('ch_owner_1');
+    const a = await createWorkspace(owner.id, 'a');
+    const b = await createWorkspace(owner.id, 'b');
+    await newChannel(a.id, { name: 'Dev' });
+    expect(await sqlState(newChannel(a.id, { name: 'dev' }))).toBe(UNIQUE_VIOLATION);
+    expect(await sqlState(newChannel(a.id, { name: 'DEV', type: 'private' }))).toBe(
+      UNIQUE_VIOLATION,
+    );
+    await expect(newChannel(b.id, { name: 'Dev' })).resolves.toHaveLength(1);
+  });
+
+  it('既定チャンネルは、ワークスペースに 1 つ', async () => {
+    const owner = await createUser('ch_owner_2');
+    const ws = await createWorkspace(owner.id);
+    await newChannel(ws.id, { name: 'general', isDefault: true });
+    expect(await sqlState(newChannel(ws.id, { name: 'other', isDefault: true }))).toBe(
+      UNIQUE_VIOLATION,
+    );
+  });
+
+  it('種類は public / private / dm のみ。dm だけ名前が null で dm_key を持つ。名前は 1〜80 文字', async () => {
+    const owner = await createUser('ch_owner_3');
+    const ws = await createWorkspace(owner.id);
+    expect(await sqlState(newChannel(ws.id, { type: 'secret' }))).toBe(CHECK_VIOLATION);
+    expect(await sqlState(newChannel(ws.id, { name: null }))).toBe(CHECK_VIOLATION); // public なのに名前なし
+    expect(await sqlState(newChannel(ws.id, { type: 'dm', name: 'x', dmKey: 'k' }))).toBe(
+      CHECK_VIOLATION,
+    ); // dm なのに名前あり
+    expect(await sqlState(newChannel(ws.id, { type: 'dm', name: null }))).toBe(CHECK_VIOLATION); // dm_key なし
+    expect(await sqlState(newChannel(ws.id, { name: '' }))).toBe(CHECK_VIOLATION);
+    expect(await sqlState(newChannel(ws.id, { name: 'a'.repeat(81) }))).toBe(CHECK_VIOLATION);
+    await expect(newChannel(ws.id, { name: 'あ'.repeat(80) })).resolves.toHaveLength(1);
+    await expect(
+      newChannel(ws.id, { type: 'dm', name: null, dmKey: 'u1:u2' }),
+    ).resolves.toHaveLength(1);
+    // 同じ 2 人の DM は、重複して作れない
+    expect(await sqlState(newChannel(ws.id, { type: 'dm', name: null, dmKey: 'u1:u2' }))).toBe(
+      UNIQUE_VIOLATION,
+    );
+  });
+
+  it('参加者の行は、チャンネルの削除で消える。同じ人を、2 回は登録できない', async () => {
+    const owner = await createUser('ch_owner_4');
+    const ws = await createWorkspace(owner.id);
+    const [ch] = await newChannel(ws.id, { name: 'tmp' });
+    await testDb.db.insert(channelMembers).values({ channelId: ch!.id, userId: owner.id });
+    expect(
+      await sqlState(
+        testDb.db.insert(channelMembers).values({ channelId: ch!.id, userId: owner.id }),
+      ),
+    ).toBe(UNIQUE_VIOLATION);
+    await testDb.db.delete(channels).where(eq(channels.id, ch!.id));
+    expect(
+      await testDb.db.select().from(channelMembers).where(eq(channelMembers.channelId, ch!.id)),
+    ).toEqual([]);
   });
 });

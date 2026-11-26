@@ -11,6 +11,13 @@ export {
   registerRequestSchema,
   usernameSchema,
 } from './auth';
+export { WORKSPACE_NAME_MAX_LENGTH, createWorkspaceSchema } from './workspace';
+export type {
+  CreateWorkspaceRequest,
+  MemberResponse,
+  WorkspaceResponse,
+  WorkspaceRole,
+} from './workspace';
 export type {
   LoginRequest,
   MeResponse,
