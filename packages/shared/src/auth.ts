@@ -44,3 +44,14 @@ export interface RegisterResponse {
   user: MeResponse;
   recoveryCode: string;
 }
+
+/**
+ * POST /auth/login の本文(FR-002)。
+ * ユーザー名とパスワードの形式は、ここでは検証しない(形式の違反と、認証の失敗を、見分けられないようにするため)。
+ * 長さの上限だけは設ける(ハッシュ計算の負荷と、レート制限のキーの大きさを抑えるため)。
+ */
+export const loginRequestSchema = z.object({
+  username: z.string().min(1).max(64),
+  password: z.string().min(1).max(256),
+});
+export type LoginRequest = z.infer<typeof loginRequestSchema>;
