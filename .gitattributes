@@ -1,0 +1,2 @@
+# 改行は LF にそろえる(Prettier の設定と同じ。Windows でチェックアウトしても CRLF に変換されない)
+* text=auto eol=lf
