@@ -6,4 +6,5 @@ coverage/
 *.log
 .DS_Store
 # ローカルのファイル保存先(開発用)
-storage/
+/storage/
+/apps/server/storage/
