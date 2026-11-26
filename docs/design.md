@@ -585,3 +585,19 @@ $\color{red}{\text{フェーズ 1 の完了条件: FR-001〜004 の受入基準�
 | D4 | 絵文字の種類 | $\color{red}{\text{Unicode 絵文字のみ(カスタム絵文字は対象外)}}$ |
 
 $\color{red}{\text{D1〜D4 は暫定案。確定の連絡がなければ、この案で進める。}}$
+
+## 9. フェーズ 2 の実装タスク
+
+$\color{red}{\text{対象は、FR-101、201〜204、206、301 と、WebSocket の基盤(§6.7 のフェーズ 2)。あわせて、フェーズ 1 で持ち越した、他のユーザーのアバターの認可(共通の所属の条件。§5.1)を行う。進め方は、§7 と同じ(上から順に、1 つずつ PR。各タスクの完了条件には、そのタスクの結合テスト(実 DB)を含め、テストなしでは、マージしない)。使うテーブルは、使うタスクで追加する。}}$
+
+| # | タスク | 完了条件 |
+|---|---|---|
+| T10 | $\color{red}{\text{ワークスペースとガード}}$ | $\color{red}{\text{channels、channel\_members のテーブルを追加する(§2)。requireMember、requireOwner(§4.1)。POST /workspaces(作成者がオーナーになり、general(既定チャンネル)と、作成者のその参加が、同じトランザクションで作られる)、GET /workspaces、GET /workspaces/:ws、GET /workspaces/:ws/members。GET /users/:userId/avatar に、同じワークスペースの active なメンバーであるという条件を加える(本人は、これまでどおり)。テスト: オーナーの一意性、作成の原子性(general がない状態が残らない)、kicked は 403・非所属は 404、他ワークスペースのメンバーのアバターは 404、同じワークスペースなら取得できる}}$ |
+| T11 | $\color{red}{\text{チャンネル}}$ | $\color{red}{\text{requireChannel。POST /workspaces/:ws/channels(名前は、同一ワークスペース内で一意。大文字小文字を区別しない)、GET /workspaces/:ws/channels(参加中と、query での未参加のパブリック一覧)、GET /workspaces/:ws/channels/admin(プライベートは名前のみ)、POST /channels/:ch/join、POST /channels/:ch/leave、GET /channels/:ch/members、POST /channels/:ch/members(§4.4 の判定順序のとおり)。テスト: §4.4 の表の各行(404・403・400 の順序)、general は退出できない、プライベートは非参加者の一覧・join に現れない、オーナーが自分自身を追加できない、同名の同時作成で 1 件だけ成功する}}$ |
+| T12 | $\color{red}{\text{招待リンク}}$ | $\color{red}{\text{invitations のテーブルを追加する。POST/GET/DELETE /workspaces/:ws/invitations、GET /invitations/:token、POST /invitations/:token/accept(§3.1 の手順)。トークンは、ハッシュで保存し、発行の応答でだけ返す。使用回数は、条件付き更新で原子的に消費する。受諾時に、general への参加も同じトランザクションで行う。kicked の再参加は拒否し、他の失敗と区別しない(同じ 404・同じ文言)。無効なトークンの試行は、レート制限の対象(§4.1)。テスト: 同時受諾が max\_uses を超えない、期限切れ・取り消し・回数超過・kicked が同一の応答、参加済みの再受諾は成功、トークンが平文で保存されていない、レート制限の超過が 429}}$ |
+| T13 | $\color{red}{\text{メッセージの投稿と取得}}$ | $\color{red}{\text{messages のテーブルを追加する(フェーズ 2 で使う列のみ。スレッド・編集・削除の列は、フェーズ 3 で追加)。POST /channels/:ch/messages(本文は、コードポイント数で検証。参加者のみ)、GET /channels/:ch/messages(新しい順のカーソル方式のページング)。非参加者には 404(§4.4)。テスト: 投稿と取得、ページングの境界(件数ちょうど・次のページなし)、非参加者・他ワークスペースが 404、本文の長さの上限}}$ |
+| T14 | $\color{red}{\text{WebSocket の基盤}}$ | $\color{red}{\text{Socket.IO の接続(Origin・セッションの確認、同時接続の上限、期限の確認)、ルームへの参加と補正(§6.2)、所属の変化に対するルームの更新(§6.3 のうち、ワークスペース・チャンネル・招待に関する行)、イベント: workspace:added、channel 系(channel:member-left を含む)、member:joined、message:created、user:updated(PATCH /me と PUT /me/avatar のハンドラに、送信処理を足す)、ログアウトでの切断(FR-003)。テスト: Origin 不一致・未ログインの接続が拒否される、参加していないチャンネルのイベントが届かない、ログアウトで切断される、投稿が別クライアントに届く、leave 後にイベントが届かない}}$ |
+| T15 | $\color{red}{\text{画面: ワークスペース}}$ | $\color{red}{\text{ワークスペースの作成、一覧と切り替え(FR-206)、招待リンクの発行・一覧・取り消し(オーナーのみ)、招待リンクの受諾画面(未ログインなら、ログインまたは登録の後に、受諾へ戻る)。テスト: 画面の部品の単体テスト(切り替え、受諾後の遷移)}}$ |
+| T16 | $\color{red}{\text{画面: チャンネルとチャット}}$ | $\color{red}{\text{チャンネル一覧(参加中・未参加のパブリック)、作成、参加・退出、プライベートへの招待、メッセージの表示と投稿、WebSocket での即時表示(再接続時の補正を含む)。テスト: Playwright で、2 人のユーザーが、招待リンクで同じワークスペースに入り、一方の投稿が、他方の画面にリロードなしで表示される流れを 1 本}}$ |
+
+$\color{red}{\text{フェーズ 2 の完了条件: FR-101、201〜204、206、301 の受入基準を満たす(キックに関する検証は、フェーズ 5)。投稿が、他のクライアントに、通常 1 秒以内に表示される(計測は、ローカルの E2E で、おおよそで確認する)。アバターが、共通の所属のあるユーザーにだけ、取得できる。CI が通る。}}$
