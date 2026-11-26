@@ -16,6 +16,9 @@ test('登録 → リカバリーコードの確認 → プロフィール変更 
   await page.goto('/');
   await expect(page).toHaveURL(/\/login$/);
 
+  // 開発サーバーの初回の読み込みが落ち着くのを待つ(入力の途中で、画面が再読み込みされないように)
+  await page.waitForLoadState('networkidle');
+
   // 登録
   await page.getByRole('link', { name: '新規登録' }).click();
   await page.getByLabel('ユーザー名').fill(username);
