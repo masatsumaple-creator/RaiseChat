@@ -55,3 +55,36 @@ export const loginRequestSchema = z.object({
   password: z.string().min(1).max(256),
 });
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
+
+/** 表示名・ステータスの上限(設計書 §2。DB の CHECK と同じ。コードポイント数) */
+export const DISPLAY_NAME_MAX_LENGTH = 50;
+export const STATUS_TEXT_MAX_LENGTH = 100;
+
+/** 改行やタブなどの制御文字を含まない(1 行の表示のため) */
+const NO_CONTROL_CHARS = /^[^\p{Cc}]*$/u;
+
+/** PATCH /me の本文(FR-004)。指定した項目だけを更新する。余分な項目は、拒否する */
+export const profileUpdateSchema = z
+  .strictObject({
+    displayName: z
+      .string()
+      .trim()
+      .refine((v) => codePointLength(v) >= 1, { message: '表示名を入力してください' })
+      .refine((v) => codePointLength(v) <= DISPLAY_NAME_MAX_LENGTH, {
+        message: `表示名は ${DISPLAY_NAME_MAX_LENGTH} 文字以下にしてください`,
+      })
+      .refine((v) => NO_CONTROL_CHARS.test(v), { message: '表示名に、制御文字は使えません' })
+      .optional(),
+    statusText: z
+      .string()
+      .trim()
+      .refine((v) => codePointLength(v) <= STATUS_TEXT_MAX_LENGTH, {
+        message: `ステータスは ${STATUS_TEXT_MAX_LENGTH} 文字以下にしてください`,
+      })
+      .refine((v) => NO_CONTROL_CHARS.test(v), { message: 'ステータスに、制御文字は使えません' })
+      .optional(),
+  })
+  .refine((v) => v.displayName !== undefined || v.statusText !== undefined, {
+    message: '更新する項目を指定してください',
+  });
+export type ProfileUpdate = z.infer<typeof profileUpdateSchema>;

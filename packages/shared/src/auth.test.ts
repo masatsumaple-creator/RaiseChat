@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { passwordSchema, registerRequestSchema, usernameSchema } from './auth';
+import { passwordSchema, profileUpdateSchema, registerRequestSchema, usernameSchema } from './auth';
 
 describe('usernameSchema', () => {
   it.each(['abc', 'Alice', 'a_1', 'A'.repeat(32), '___'])('%s は有効', (name) => {
@@ -48,5 +48,39 @@ describe('registerRequestSchema', () => {
       false,
     );
     expect(registerRequestSchema.safeParse({ username: 'alice' }).success).toBe(false);
+  });
+});
+
+describe('profileUpdateSchema(FR-004)', () => {
+  const ok = (v: unknown) => profileUpdateSchema.safeParse(v).success;
+
+  it('表示名とステータスの、どちらか一方でも更新できる', () => {
+    expect(ok({ displayName: 'Taro' })).toBe(true);
+    expect(ok({ statusText: '会議中' })).toBe(true);
+    expect(ok({ displayName: 'Taro', statusText: '会議中' })).toBe(true);
+  });
+
+  it('何も指定しない・余分な項目がある場合は無効', () => {
+    expect(ok({})).toBe(false);
+    expect(ok({ username: 'x' })).toBe(false);
+    expect(ok({ displayName: 'Taro', avatarKey: 'x' })).toBe(false);
+  });
+
+  it('前後の空白は取り除く。空白だけの表示名は無効、空白だけのステータスは空になる', () => {
+    expect(profileUpdateSchema.parse({ displayName: '  Taro  ' }).displayName).toBe('Taro');
+    expect(ok({ displayName: '   ' })).toBe(false);
+    expect(profileUpdateSchema.parse({ statusText: '   ' }).statusText).toBe('');
+  });
+
+  it('文字数は、コードポイント数で数える(境界)', () => {
+    expect(ok({ displayName: '😀'.repeat(50) })).toBe(true);
+    expect(ok({ displayName: '😀'.repeat(51) })).toBe(false);
+    expect(ok({ statusText: '😀'.repeat(100) })).toBe(true);
+    expect(ok({ statusText: '😀'.repeat(101) })).toBe(false);
+  });
+
+  it('制御文字は無効', () => {
+    expect(ok({ displayName: 'a\nb' })).toBe(false);
+    expect(ok({ statusText: 'a\tb' })).toBe(false);
   });
 });
