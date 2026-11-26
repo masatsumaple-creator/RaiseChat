@@ -37,3 +37,12 @@ pnpm db:down        # 停止する
 ```
 
 接続先は、環境変数 `DATABASE_URL`(未設定なら、docker compose の既定値)。テストは、テストごとに一時的な DB を作って削除するため、先に `pnpm db:up` が必要。
+
+## サーバーの起動
+
+```sh
+cp .env.example .env   # 初回のみ。必要に応じて編集する
+pnpm dev:server        # apps/server を、ファイルの変更を監視しながら起動する(既定は http://localhost:3000)
+```
+
+`GET /health` で、動作を確認できる。GET 以外のリクエストは、`ALLOWED_ORIGIN` に一致する `Origin` ヘッダがないと、403 になる(CSRF 対策。設計書 §4.1)。
