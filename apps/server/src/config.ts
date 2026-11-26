@@ -20,6 +20,8 @@ const envSchema = z.object({
    * 未設定なら、X-Forwarded-For を無視して、接続元のアドレスを使う(ヘッダの偽装で、レート制限を回避されないため)。
    */
   TRUSTED_PROXIES: z.string().default(''),
+  /** アップロードされたファイルの保存先(ローカルディスク。設計書 §1)。相対パスは、起動した場所から */
+  STORAGE_DIR: z.string().min(1).default('./storage'),
 });
 
 export interface Config {
@@ -29,6 +31,7 @@ export interface Config {
   /** 正規化したオリジン(例: http://localhost:5173)の一覧 */
   allowedOrigins: string[];
   trustedProxies: string[];
+  storageDir: string;
   isProduction: boolean;
 }
 
@@ -70,6 +73,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     databaseUrl: e.DATABASE_URL,
     allowedOrigins,
     trustedProxies: splitList(e.TRUSTED_PROXIES),
+    storageDir: e.STORAGE_DIR,
     isProduction: e.NODE_ENV === 'production',
   };
 }
