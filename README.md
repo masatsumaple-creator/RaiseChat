@@ -46,3 +46,11 @@ pnpm dev:server        # apps/server を、ファイルの変更を監視しな�
 ```
 
 `GET /health` で、動作を確認できる。GET 以外のリクエストは、`ALLOWED_ORIGIN` に一致する `Origin` ヘッダがないと、403 になる(CSRF 対策。設計書 §4.1)。
+
+## 画面(フロント)の起動
+
+```sh
+pnpm dev:web           # http://localhost:5173(サーバーを、先に起動しておく)
+```
+
+`/api` は、開発サーバーが、サーバー(既定は http://localhost:3000)へ中継する。ブラウザからは、画面と API が同じオリジンに見えるので、Cookie と `Origin` の検証が、そのまま通る(`.env` の `ALLOWED_ORIGIN` は、`http://localhost:5173` のままにする)。サーバーを別のポートで起動したときは、環境変数 `API_TARGET` で中継先を指定する。ポート 5173 が使用中のときは、別のポートに逃げず、エラーで止まる(`ALLOWED_ORIGIN` との食い違いを防ぐため)。

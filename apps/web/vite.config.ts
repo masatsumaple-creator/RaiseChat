@@ -1,0 +1,16 @@
+import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
+
+// API は、開発サーバーから、サーバー(既定は :3000)へ中継する。
+// ブラウザからは、画面と API が同じオリジン(http://localhost:5173)に見えるので、
+// Cookie がそのまま届き、Origin の検証(ALLOWED_ORIGIN)も通る。
+const API_TARGET = process.env['API_TARGET'] ?? 'http://localhost:3000';
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173,
+    strictPort: true, // ALLOWED_ORIGIN と食い違わないよう、ポートが塞がっていたら失敗させる
+    proxy: { '/api': { target: API_TARGET } },
+  },
+});
