@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1795702253077,
+      "tag": "0000_flaky_joystick",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795702630087,
+      "tag": "0001_nebulous_kronos",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795702631067,
+      "tag": "0002_workspaces_owner_membership_fk",
+      "breakpoints": true
+    }
+  ]
+}

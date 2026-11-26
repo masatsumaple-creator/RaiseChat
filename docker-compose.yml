@@ -1,0 +1,21 @@
+# ローカル開発用の PostgreSQL(設計書 §1)。起動: pnpm db:up
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: raisechat
+      POSTGRES_PASSWORD: raisechat
+      POSTGRES_DB: raisechat
+    ports:
+      # 固定パスワードのため、自分のマシンからだけ接続できるようにする(LAN には公開しない)
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - raisechat-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U raisechat -d raisechat']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  raisechat-pgdata:
