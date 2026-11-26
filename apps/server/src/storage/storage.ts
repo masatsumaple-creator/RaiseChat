@@ -14,7 +14,8 @@ export interface Storage {
 }
 
 /** 安全なキーだけを許す: 英数字・`_`・`-`・`.`・`/`。先頭の `/`、`..`、空の要素、`\` は不可 */
-const KEY_PATTERN = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*(?:\/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)*$/;
+const KEY_PATTERN =
+  /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*(?:\/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)*$/;
 
 export function isValidStorageKey(key: string): boolean {
   return key.length > 0 && key.length <= 512 && KEY_PATTERN.test(key) && !key.includes('..');
