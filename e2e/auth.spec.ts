@@ -16,11 +16,10 @@ test('登録 → リカバリーコードの確認 → プロフィール変更 
   await page.goto('/');
   await expect(page).toHaveURL(/\/login$/);
 
-  // 開発サーバーの初回の読み込みが落ち着くのを待つ(入力の途中で、画面が再読み込みされないように)
-  await page.waitForLoadState('networkidle');
-
-  // 登録
+  // 登録。画面が切り替わるのを待ってから入力する
+  // (ログイン画面にも同じラベルの欄があり、切り替わる前に入力すると、そちらに入ってしまう)
   await page.getByRole('link', { name: '新規登録' }).click();
+  await expect(page.getByRole('heading', { name: 'アカウント登録' })).toBeVisible();
   await page.getByLabel('ユーザー名').fill(username);
   await page.getByLabel(/^パスワード/).fill(password);
   await page.getByRole('button', { name: '登録' }).click();
