@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDatabase } from '../test/db';
-import { memberships, storageDeletions, users, workspaces } from './schema';
+import { memberships, sessions, storageDeletions, users, workspaces } from './schema';
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>;
 
@@ -22,6 +22,23 @@ function newUser(username: string) {
   };
 }
 
+async function createUser(username: string) {
+  const [user] = await testDb.db.insert(users).values(newUser(username)).returning();
+  return user!;
+}
+
+/**
+ * ワークスペースと、そのオーナーの行を、同じトランザクションで作る。
+ * 両者は相互に参照するため、外部キーの検査は、コミットまで遅れる(0002 のマイグレーション)。
+ */
+async function createWorkspace(ownerId: string, name = 'ws') {
+  return testDb.db.transaction(async (tx) => {
+    const [ws] = await tx.insert(workspaces).values({ name, ownerId }).returning();
+    await tx.insert(memberships).values({ workspaceId: ws!.id, userId: ownerId, role: 'owner' });
+    return ws!;
+  });
+}
+
 /** 制約違反は、ドライバのエラーに包まれて届くため、原因の SQLSTATE を取り出す */
 async function sqlState(promise: Promise<unknown>): Promise<string | undefined> {
   try {
@@ -35,6 +52,7 @@ async function sqlState(promise: Promise<unknown>): Promise<string | undefined> 
 
 const UNIQUE_VIOLATION = '23505';
 const CHECK_VIOLATION = '23514';
+const FOREIGN_KEY_VIOLATION = '23503';
 
 describe('マイグレーション', () => {
   it('空の DB に適用でき、フェーズ 1 のテーブルができる', async () => {
@@ -51,6 +69,13 @@ describe('マイグレーション', () => {
         'storage_deletions',
       ]),
     );
+  });
+
+  it('workspaces.owner_id にインデックスがある', async () => {
+    const rows = await testDb.db.execute<{ indexname: string }>(
+      sql`SELECT indexname FROM pg_indexes WHERE tablename = 'workspaces'`,
+    );
+    expect(rows.map((r) => r.indexname)).toContain('workspaces_owner_id_idx');
   });
 });
 
@@ -85,37 +110,20 @@ describe('users の制約', () => {
 });
 
 describe('memberships の制約', () => {
-  async function setup(prefix: string) {
-    const [owner] = await testDb.db
-      .insert(users)
-      .values(newUser(`${prefix}_owner`))
-      .returning();
-    const [member] = await testDb.db
-      .insert(users)
-      .values(newUser(`${prefix}_member`))
-      .returning();
-    const [ws] = await testDb.db
-      .insert(workspaces)
-      .values({ name: 'ws', ownerId: owner!.id })
-      .returning();
-    await testDb.db
-      .insert(memberships)
-      .values({ workspaceId: ws!.id, userId: owner!.id, role: 'owner' });
-    return { owner: owner!, member: member!, ws: ws! };
-  }
-
   it('オーナーは、ワークスペースごとに 1 人', async () => {
-    const { member, ws } = await setup('one_owner');
+    const owner = await createUser('one_owner_a');
+    const other = await createUser('one_owner_b');
+    const ws = await createWorkspace(owner.id);
     const state = await sqlState(
-      testDb.db
-        .insert(memberships)
-        .values({ workspaceId: ws.id, userId: member.id, role: 'owner' }),
+      testDb.db.insert(memberships).values({ workspaceId: ws.id, userId: other.id, role: 'owner' }),
     );
     expect(state).toBe(UNIQUE_VIOLATION);
   });
 
   it('role と status は、決められた値だけ', async () => {
-    const { member, ws } = await setup('enum_check');
+    const owner = await createUser('enum_owner');
+    const member = await createUser('enum_member');
+    const ws = await createWorkspace(owner.id);
     const badRole = await sqlState(
       testDb.db
         .insert(memberships)
@@ -131,7 +139,9 @@ describe('memberships の制約', () => {
   });
 
   it('同じユーザーは、同じワークスペースに 1 行だけ(kicked の行も 1 行)', async () => {
-    const { member, ws } = await setup('dup');
+    const owner = await createUser('dup_owner');
+    const member = await createUser('dup_member');
+    const ws = await createWorkspace(owner.id);
     await testDb.db
       .insert(memberships)
       .values({ workspaceId: ws.id, userId: member.id, role: 'member', status: 'kicked' });
@@ -144,7 +154,9 @@ describe('memberships の制約', () => {
   });
 
   it('status の既定値は active', async () => {
-    const { member, ws } = await setup('default_status');
+    const owner = await createUser('status_owner');
+    const member = await createUser('status_member');
+    const ws = await createWorkspace(owner.id);
     await testDb.db
       .insert(memberships)
       .values({ workspaceId: ws.id, userId: member.id, role: 'member' });
@@ -153,6 +165,135 @@ describe('memberships の制約', () => {
       .from(memberships)
       .where(eq(memberships.userId, member.id));
     expect(row?.status).toBe('active');
+  });
+});
+
+describe('オーナーの整合性(workspaces.owner_id と、オーナーの行の一致)', () => {
+  it('ワークスペースと、オーナーの行を、同じトランザクションで作れる', async () => {
+    const owner = await createUser('consistent_owner');
+    const ws = await createWorkspace(owner.id);
+    expect(ws.ownerRole).toBe('owner');
+    const [row] = await testDb.db
+      .select()
+      .from(memberships)
+      .where(eq(memberships.workspaceId, ws.id));
+    expect(row).toMatchObject({ userId: owner.id, role: 'owner', status: 'active' });
+  });
+
+  it('オーナーの行がないワークスペースは、コミットできない', async () => {
+    const owner = await createUser('no_membership_owner');
+    const state = await sqlState(
+      testDb.db.insert(workspaces).values({ name: 'orphan', ownerId: owner.id }),
+    );
+    expect(state).toBe(FOREIGN_KEY_VIOLATION);
+    const rows = await testDb.db.select().from(workspaces).where(eq(workspaces.name, 'orphan'));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('owner_id と、role が owner の行のユーザーが食い違うと、コミットできない', async () => {
+    const owner = await createUser('mismatch_owner');
+    const other = await createUser('mismatch_other');
+    const state = await sqlState(
+      testDb.db.transaction(async (tx) => {
+        const [ws] = await tx
+          .insert(workspaces)
+          .values({ name: 'mismatch', ownerId: owner.id })
+          .returning();
+        // owner_id は owner だが、オーナーの行は other
+        await tx
+          .insert(memberships)
+          .values({ workspaceId: ws!.id, userId: other.id, role: 'owner' });
+      }),
+    );
+    expect(state).toBe(FOREIGN_KEY_VIOLATION);
+    const rows = await testDb.db.select().from(workspaces).where(eq(workspaces.name, 'mismatch'));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('オーナーの行の role を変えられない', async () => {
+    const owner = await createUser('demote_owner');
+    const ws = await createWorkspace(owner.id);
+    const state = await sqlState(
+      testDb.db
+        .update(memberships)
+        .set({ role: 'member' })
+        .where(eq(memberships.workspaceId, ws.id)),
+    );
+    expect(state).toBe(FOREIGN_KEY_VIOLATION);
+    const [row] = await testDb.db
+      .select()
+      .from(memberships)
+      .where(eq(memberships.workspaceId, ws.id));
+    expect(row?.role).toBe('owner');
+  });
+
+  it('オーナーの行だけを削除できない(キックできない)', async () => {
+    const owner = await createUser('delete_owner');
+    const ws = await createWorkspace(owner.id);
+    const state = await sqlState(
+      testDb.db.delete(memberships).where(eq(memberships.workspaceId, ws.id)),
+    );
+    expect(state).toBe(FOREIGN_KEY_VIOLATION);
+    const rows = await testDb.db
+      .select()
+      .from(memberships)
+      .where(eq(memberships.workspaceId, ws.id));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('owner_id を、オーナーの行がないユーザーに付け替えられない', async () => {
+    const owner = await createUser('swap_owner');
+    const other = await createUser('swap_other');
+    const ws = await createWorkspace(owner.id);
+    const state = await sqlState(
+      testDb.db.update(workspaces).set({ ownerId: other.id }).where(eq(workspaces.id, ws.id)),
+    );
+    expect(state).toBe(FOREIGN_KEY_VIOLATION);
+  });
+
+  it('ワークスペースを削除すると、オーナーの行も含めて、membership が消える', async () => {
+    const owner = await createUser('cascade_ws_owner');
+    const member = await createUser('cascade_ws_member');
+    const ws = await createWorkspace(owner.id);
+    await testDb.db
+      .insert(memberships)
+      .values({ workspaceId: ws.id, userId: member.id, role: 'member' });
+
+    await testDb.db.delete(workspaces).where(eq(workspaces.id, ws.id));
+
+    const rows = await testDb.db
+      .select()
+      .from(memberships)
+      .where(eq(memberships.workspaceId, ws.id));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('ワークスペースのオーナーであるユーザーは、削除できない', async () => {
+    const owner = await createUser('undeletable_owner');
+    await createWorkspace(owner.id);
+    const state = await sqlState(testDb.db.delete(users).where(eq(users.id, owner.id)));
+    expect(state).toBe(FOREIGN_KEY_VIOLATION);
+  });
+});
+
+describe('sessions の連鎖削除', () => {
+  it('ユーザーを削除すると、そのユーザーのセッションだけが消える', async () => {
+    const target = await createUser('session_target');
+    const bystander = await createUser('session_bystander');
+    const expiresAt = new Date(Date.now() + 60_000);
+    await testDb.db.insert(sessions).values([
+      { tokenHash: 'target-1', userId: target.id, expiresAt },
+      { tokenHash: 'target-2', userId: target.id, expiresAt },
+      { tokenHash: 'bystander-1', userId: bystander.id, expiresAt },
+    ]);
+
+    await testDb.db.delete(users).where(eq(users.id, target.id));
+
+    const rows = await testDb.db.select().from(sessions);
+    const hashes = rows.map((r) => r.tokenHash);
+    expect(hashes).not.toContain('target-1');
+    expect(hashes).not.toContain('target-2');
+    expect(hashes).toContain('bystander-1');
   });
 });
 

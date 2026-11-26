@@ -71,8 +71,10 @@ CREATE TABLE workspaces (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name        text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 50),
   owner_id    uuid NOT NULL REFERENCES users(id),
+  owner_role  text NOT NULL GENERATED ALWAYS AS ('owner') STORED,  -- 常に 'owner'。下の外部キー用
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX workspaces_owner_id_idx ON workspaces (owner_id);
 
 -- 所属。kicked の行は、キックから解除までの間だけ存在する(FR-302, 304)
 CREATE TABLE memberships (
@@ -83,8 +85,16 @@ CREATE TABLE memberships (
   joined_at    timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (workspace_id, user_id)
 );
--- オーナーは各ワークスペースに 1 人。workspaces.owner_id と一致させる(作成時に同じトランザクションで入れる)
+-- オーナーは各ワークスペースに 1 人
 CREATE UNIQUE INDEX memberships_one_owner_key ON memberships (workspace_id) WHERE role = 'owner';
+CREATE UNIQUE INDEX memberships_workspace_user_role_key ON memberships (workspace_id, user_id, role);
+-- workspaces.owner_id と、オーナーの行の一致を、DB で保証する。
+-- ワークスペースと、オーナーの行は相互に参照するため、同じトランザクションで作り、検査はコミットまで遅らせる。
+-- オーナーの行の削除・role の変更・別のユーザーへの付け替えと、owner_id の付け替えは、コミット時に拒否される。
+ALTER TABLE workspaces
+  ADD CONSTRAINT workspaces_owner_membership_fk
+  FOREIGN KEY (id, owner_id, owner_role) REFERENCES memberships (workspace_id, user_id, role)
+  DEFERRABLE INITIALLY DEFERRED;
 CREATE INDEX memberships_user_id_idx ON memberships (user_id);
 
 -- 招待リンク(FR-301)。max_uses が null なら無制限

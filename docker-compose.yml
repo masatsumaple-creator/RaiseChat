@@ -7,7 +7,8 @@ services:
       POSTGRES_PASSWORD: raisechat
       POSTGRES_DB: raisechat
     ports:
-      - '5432:5432'
+      # 固定パスワードのため、自分のマシンからだけ接続できるようにする(LAN には公開しない)
+      - '127.0.0.1:5432:5432'
     volumes:
       - raisechat-pgdata:/var/lib/postgresql/data
     healthcheck:

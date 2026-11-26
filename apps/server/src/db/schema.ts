@@ -60,9 +60,16 @@ export const workspaces = pgTable(
     ownerId: uuid('owner_id')
       .notNull()
       .references(() => users.id),
+    // 常に 'owner'。(id, owner_id, owner_role) で、memberships の「オーナーの行」を参照するため(0001 の外部キー)
+    ownerRole: text('owner_role')
+      .notNull()
+      .generatedAlwaysAs(sql`'owner'`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [check('workspaces_name_length', sql`char_length(${t.name}) BETWEEN 1 AND 50`)],
+  (t) => [
+    check('workspaces_name_length', sql`char_length(${t.name}) BETWEEN 1 AND 50`),
+    index('workspaces_owner_id_idx').on(t.ownerId),
+  ],
 );
 
 /** 所属。kicked の行は、キックから解除までの間だけ存在する(FR-302, 304) */
@@ -84,10 +91,12 @@ export const memberships = pgTable(
     check('memberships_role_check', sql`${t.role} IN ('owner', 'member')`),
     check('memberships_status_check', sql`${t.status} IN ('active', 'kicked')`),
     index('memberships_user_id_idx').on(t.userId),
-    // オーナーは各ワークスペースに 1 人。workspaces.owner_id と一致させる
+    // オーナーは各ワークスペースに 1 人
     uniqueIndex('memberships_one_owner_key')
       .on(t.workspaceId)
       .where(sql`${t.role} = 'owner'`),
+    // workspaces の外部キー(0001)が参照する。workspaces.owner_id と、オーナーの行の一致を DB で保証する
+    uniqueIndex('memberships_workspace_user_role_key').on(t.workspaceId, t.userId, t.role),
   ],
 );
 
