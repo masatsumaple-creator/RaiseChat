@@ -11,7 +11,11 @@
     "typecheck": "tsc -p apps/server/tsconfig.json && tsc -p apps/web/tsconfig.json && tsc -p packages/shared/tsconfig.json",
     "test": "vitest run",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "db:up": "docker compose up -d --wait postgres",
+    "db:down": "docker compose down",
+    "db:generate": "pnpm --filter @raisechat/server db:generate",
+    "db:migrate": "pnpm --filter @raisechat/server db:migrate"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
