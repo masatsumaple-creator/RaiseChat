@@ -15,7 +15,8 @@
     "db:up": "docker compose up -d --wait postgres",
     "db:down": "docker compose down",
     "db:generate": "pnpm --filter @raisechat/server db:generate",
-    "db:migrate": "pnpm --filter @raisechat/server db:migrate"
+    "db:migrate": "pnpm --filter @raisechat/server db:migrate",
+    "dev:server": "pnpm --filter @raisechat/server dev"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
