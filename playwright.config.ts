@@ -13,6 +13,7 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${WEB_PORT}`,
     trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
   webServer: [
     {
@@ -21,6 +22,8 @@ export default defineConfig({
       env: { PORT: String(SERVER_PORT), ALLOWED_ORIGIN: `http://localhost:${WEB_PORT}` },
       url: `http://localhost:${SERVER_PORT}/health`,
       reuseExistingServer: false,
+      stdout: 'pipe',
+      stderr: 'pipe',
       timeout: 60_000,
     },
     {
@@ -28,6 +31,8 @@ export default defineConfig({
       env: { WEB_PORT: String(WEB_PORT), API_TARGET: `http://localhost:${SERVER_PORT}` },
       url: `http://localhost:${WEB_PORT}`,
       reuseExistingServer: false,
+      stdout: 'pipe',
+      stderr: 'pipe',
       timeout: 60_000,
     },
   ],
