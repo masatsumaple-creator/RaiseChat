@@ -2,10 +2,10 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | 0.2(ドラフト。PR 1: 技術選定・DB スキーマ、PR 2: 認可ルール・REST API 一覧) |
+| 版 | 0.3(ドラフト。PR 1: 技術選定・DB スキーマ、PR 2: 認可ルール・REST API 一覧、PR 3: WebSocket・フェーズ 1 の実装タスク) |
 | 作成日 | 2026-11-23 |
 | 前提 | [要件定義書](requirements.md)(0.2 以降) |
-| 今後の追加 | PR 3: WebSocket のイベント設計・フェーズ 1 の実装タスク |
+| 今後の追加 | フェーズ 2 以降の実装タスクは、各フェーズの開始時に、この文書へ追加する |
 
 **表記ルール**: 要件定義書と同じ。最初に提示された要件にない決定事項は $\color{red}{\text{赤文字}}$ で表記する。設計書は全体が要件定義書からの派生のため、ほぼ全体が赤文字になる。コードブロックは色を付けられないため、ブロック全体が設計案である。
 
@@ -425,7 +425,7 @@ $\color{red}{\text{パスの先頭に /api を付ける。ID は uuid(メッセ�
 
 | メソッド・パス | 認可 | 概要 | FR |
 |---|---|---|---|
-| `GET /channels/:ch/messages` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{トップレベルのメッセージを新しい順に取得(返信数、リアクション、添付つき)。cursor で次のページ}}$ | 101, 105 |
+| `GET /channels/:ch/messages` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{トップレベルのメッセージを新しい順に取得(返信数、リアクション、添付つき)。cursor で次のページ。after パラメータ(指定した ID より新しいメッセージを、古い順に 50 件)で、再接続後の取りこぼしを取得できる(§6.5)}}$ | 101, 105 |
 | `POST /channels/:ch/messages` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{投稿。本文のみは JSON、添付つきは multipart。メンションを解析して登録し、WebSocket で配信}}$ | 101, 107, 109 |
 | `GET /messages/:id/replies` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{スレッドの返信を古い順に取得}}$ | 105 |
 | `POST /messages/:id/replies` | $\color{red}{\text{requireChannel}}$ | $\color{red}{\text{返信の投稿。親はトップレベルのみ。ThreadMember を作成・追加}}$ | 105 |
@@ -452,7 +452,98 @@ $\color{red}{\text{パスの先頭に /api を付ける。ID は uuid(メッセ�
 - $\color{red}{\text{添付とアバターは、拡張子と Content-Type ではなく、ファイル内容で形式を判定する(FR-107)。}}$
 - $\color{red}{\text{ヘルスチェック用に、認証なしの GET /health を設ける。}}$
 
-## 6. 未決事項(設計)
+## 6. WebSocket(Socket.IO)のイベント設計
+
+$\color{red}{\text{方針: WebSocket は、サーバーからクライアントへの通知専用にする。書き込み(投稿・編集・既読など)は、すべて REST で行い、認可を REST に一本化する。クライアントからサーバーへ送るイベントは設けず、受信しても無視する。イベント名はコードで表記し、色は付けない。}}$
+
+### 6.1 接続と認証
+
+- $\color{red}{\text{トランスポートは websocket のみ(ポーリングへのフォールバックは使わない)。Origin の検証を、一か所で済ませるため。}}$
+- $\color{red}{\text{ハンドシェイクで Origin を検証する。許可するオリジンと一致しない場合と、Origin ヘッダがない場合は、接続を拒否する(REST の CSRF 対策と同じ基準。§4.1)。}}$
+- $\color{red}{\text{ハンドシェイクの Cookie からセッションを引き、有効でなければ拒否する(401 相当)。接続したソケットには、ユーザー ID とセッションのトークンのハッシュを持たせる。}}$
+- $\color{red}{\text{1 ユーザーあたりの同時接続は 10 まで。超えた場合は、最も古い接続を切る。}}$
+- $\color{red}{\text{1 つのソケットで、ユーザーが所属する全ワークスペースの通知を受ける(アカウントはグローバル。§9 #3)。ワークスペースごとに接続を分けない。}}$
+
+### 6.2 ルーム
+
+| ルーム | 参加者 | 用途 |
+|---|---|---|
+| `user:{userId}` | $\color{red}{\text{そのユーザーの全ソケット}}$ | $\color{red}{\text{本人宛の通知(メンション、既読の同期、所属の変化)}}$ |
+| `session:{tokenHash}` | $\color{red}{\text{そのセッションのソケット}}$ | $\color{red}{\text{ログアウト時の切断}}$ |
+| `ws:{workspaceId}` | $\color{red}{\text{そのワークスペースの active メンバーのソケット}}$ | $\color{red}{\text{メンバーの増減、パブリックチャンネルの作成・削除、プロフィールの変更}}$ |
+| `ch:{channelId}` | $\color{red}{\text{そのチャンネルの参加者(ChannelMember)のソケット}}$ | $\color{red}{\text{メッセージ・スレッド・リアクションの通知}}$ |
+
+$\color{red}{\text{接続時に、サーバーが、DB の Membership(active)と ChannelMember から、参加するルームを決めて、自分で参加させる。クライアントが、ルームを指定して参加する手段は設けない(任意のチャンネルを購読される恐れをなくすため)。参加させた後に、もう一度 DB を引いて、差分があれば補正する(接続中に所属が変わった場合に備える)。}}$
+
+### 6.3 所属の変化に対するルームの更新
+
+$\color{red}{\text{REST の処理が DB にコミットされた後に、同じリクエストの中で、ルームを更新して、通知を送る。ルームの更新は、通知の送信より先に行う(削除や追放の対象に、最後の通知が届かないようにするため)。}}$
+
+| 契機 | ルームの更新 | 通知 |
+|---|---|---|
+| チャンネルへの参加・招待 | $\color{red}{\text{対象ユーザーの全ソケットを ch ルームに参加させる}}$ | `channel:added`(user ルームへ) |
+| チャンネルからの退出 | $\color{red}{\text{対象ユーザーの全ソケットを ch ルームから外す}}$ | `channel:left`(user ルームへ)、`channel:member-left`(ch ルームへ) |
+| チャンネルの削除 | $\color{red}{\text{全員を ch ルームから外す(通知の後)}}$ | `channel:deleted`(パブリックは ws ルームへ、プライベートと DM は ch ルームへ) |
+| キック(FR-302) | $\color{red}{\text{対象ユーザーの全ソケットを、そのワークスペースの ws ルームと、そのワークスペースの全 ch ルームから外す。他のワークスペースのルームと、接続は維持する}}$ | `workspace:removed`(user ルームへ)、`member:removed`(ws ルームへ) |
+| キック解除・再参加 | $\color{red}{\text{再参加の受諾(招待リンク)で、ws ルームと general の ch ルームに参加させる}}$ | `member:joined`(ws ルームへ) |
+| パスワード再設定(FR-005) | $\color{red}{\text{そのユーザーの全ソケットを切断する(全セッションが削除されるため)}}$ | $\color{red}{\text{なし}}$ |
+| ログアウト(FR-003) | $\color{red}{\text{そのセッションのソケットだけを切断する}}$ | $\color{red}{\text{なし}}$ |
+
+$\color{red}{\text{セッションの期限切れ(30 日)は、接続を張ったまま超えた場合に備えて、1 時間ごとにソケットのセッションを DB で確認し、無効なら切断する。}}$
+
+### 6.4 サーバーからクライアントへのイベント
+
+$\color{red}{\text{ペイロードは、REST の応答と同じ形(メッセージなら、返信数・リアクション・添付つき)にする。削除済みのメッセージの本文は含めない。通知のペイロードに、受信者が閲覧権限を持たない情報を入れない。}}$
+
+| イベント | 送信先 | 契機 | FR |
+|---|---|---|---|
+| `message:created` | $\color{red}{\text{ch ルーム}}$ | $\color{red}{\text{トップレベルのメッセージの投稿}}$ | 101 |
+| `message:updated` | $\color{red}{\text{ch ルーム}}$ | $\color{red}{\text{本文の編集}}$ | 103 |
+| `message:deleted` | $\color{red}{\text{ch ルーム}}$ | $\color{red}{\text{論理削除(ID とチャンネル ID のみ)}}$ | 104 |
+| `thread:reply-created` | $\color{red}{\text{ch ルーム}}$ | $\color{red}{\text{返信の投稿(返信と、親の返信数を含む)}}$ | 105 |
+| `thread:reply-updated`、`thread:reply-deleted` | $\color{red}{\text{ch ルーム}}$ | $\color{red}{\text{返信の編集・削除}}$ | 103, 104 |
+| `reaction:added`、`reaction:removed` | $\color{red}{\text{ch ルーム}}$ | $\color{red}{\text{リアクションの付与・解除}}$ | 108 |
+| `mention:created` | $\color{red}{\text{user ルーム(メンションされた人)}}$ | $\color{red}{\text{メンションつきの投稿・編集(新しく加わった人のみ)。メッセージの ID、チャンネル ID、ワークスペース ID を含む}}$ | 402 |
+| `read:updated` | $\color{red}{\text{user ルーム}}$ | $\color{red}{\text{チャンネル・スレッドの既読位置の更新(別の端末・別のタブの表示を同期する)}}$ | 401 |
+| `channel:created` | $\color{red}{\text{パブリックは ws ルーム、プライベートは作成者の user ルーム}}$ | $\color{red}{\text{チャンネルの作成}}$ | 202 |
+| `channel:added`、`channel:left`、`channel:deleted`、`channel:member-left` | $\color{red}{\text{§6.3 のとおり}}$ | $\color{red}{\text{参加・退出・削除}}$ | 203, 204, 303 |
+| `dm:created` | $\color{red}{\text{2 人の user ルーム}}$ | $\color{red}{\text{DM の作成(参加者の ch ルームへの参加も、この時に行う)}}$ | 102 |
+| `member:joined`、`member:removed` | $\color{red}{\text{ws ルーム}}$ | $\color{red}{\text{招待の受諾・キック}}$ | 301, 302 |
+| `workspace:removed` | $\color{red}{\text{user ルーム}}$ | $\color{red}{\text{キック(クライアントは、そのワークスペースの表示を閉じる)}}$ | 302 |
+| `user:updated` | $\color{red}{\text{その人が active で所属する全ワークスペースの ws ルーム}}$ | $\color{red}{\text{表示名・アバター・ステータスの変更}}$ | 004 |
+
+$\color{red}{\text{未読数・メンション数は、クライアントが、REST の初期値(GET /workspaces、GET /workspaces/:ws/channels)に、受信したイベントを加えて管理する。ミュート中のチャンネルの message:created は、未読に数えず、メンションは数える(FR-207、FR-403)。自分が投稿したメッセージは、未読に数えない。}}$
+
+### 6.5 再接続と取りこぼし
+
+- $\color{red}{\text{WebSocket は、切断中のイベントを保証しない。クライアントは、再接続したら、表示中のチャンネルと、未読数の元データを、REST で取り直す。}}$
+- $\color{red}{\text{取りこぼしたメッセージを取るため、GET /channels/:ch/messages に、after パラメータ(指定した ID より新しいメッセージを、古い順に 50 件)を設ける。§3 のとおり、メッセージの採番はチャンネル単位の advisory lock でコミット順と一致しているため、「最後に受信した ID より新しい」で取りこぼしなく取れる。}}$
+- $\color{red}{\text{Socket.IO の自動再接続を使う(間隔は、指数的に伸ばし、最大 30 秒)。ハートビートは Socket.IO の既定(25 秒)。}}$
+- $\color{red}{\text{サーバーの再起動で、ルームの状態は失われる。クライアントが再接続し、接続時に §6.2 の手順でルームに参加し直す。}}$
+
+### 6.6 テスト
+
+$\color{red}{\text{結合テストで、次を確認する。(1) Origin がない・違う接続は拒否される。(2) セッションがない接続は拒否される。(3) 参加していないチャンネルのメッセージは届かない。(4) キックされたユーザーに、そのワークスペースのイベントが届かず、他のワークスペースのイベントは届き続ける。(5) チャンネルを退出・削除された後は、そのチャンネルのイベントが届かない。(6) パスワード再設定とログアウトで、該当のソケットが切断される。(7) 再接続後に、after パラメータで取りこぼしを取得できる。}}$
+
+## 7. フェーズ 1 の実装タスク
+
+$\color{red}{\text{対象は、FR-001〜004(登録・ログイン・ログアウト・プロフィール)と、基盤。あわせて、FR-005 のためのリカバリーコードの発行と保存(§9 #10)を行う。タスクは、上から順に、1 つずつ PR にする。各タスクの完了条件を満たし、CI が通ったら、次へ進む。}}$
+
+| # | タスク | 完了条件 |
+|---|---|---|
+| T1 | $\color{red}{\text{リポジトリの雛形}}$ | $\color{red}{\text{pnpm ワークスペース(apps/web、apps/server、packages/shared)。TypeScript、ESLint、Prettier、Vitest の設定。.gitignore と、環境変数の例(.env.example)。pnpm install と pnpm test が、ルートで通る}}$ |
+| T2 | $\color{red}{\text{CI}}$ | $\color{red}{\text{GitHub Actions で、lint、型チェック、テストを実行する(既存の claude 用のワークフローとは別のファイル)。PostgreSQL を、サービスコンテナで起動する}}$ |
+| T3 | $\color{red}{\text{DB とマイグレーション}}$ | $\color{red}{\text{docker compose で PostgreSQL 16 を起動する。Drizzle で、§2 のスキーマのうち、users、sessions、workspaces、memberships(status を含む。要件定義書 §10.1 のとおり、Membership.status はフェーズ 1 で作る)、storage\_deletions を定義し、マイグレーションを生成する。マイグレーションの適用と、テスト用 DB の作成を、スクリプトにする。残りのテーブルは、使うフェーズで追加する。workspaces と memberships は、フェーズ 1 では API を作らない}}$ |
+| T4 | $\color{red}{\text{サーバーの骨格}}$ | $\color{red}{\text{Fastify の起動、設定の読み込み、zod による検証、§4.3 のエラー形式、GET /health、Origin の検証(§4.1)、Cookie の設定、レート制限の仕組み(メモリ上。§4.1)、trustProxy の設定}}$ |
+| T5 | $\color{red}{\text{登録・ログイン・ログアウト}}$ | $\color{red}{\text{POST /auth/register、/auth/login、/auth/logout と GET /me。argon2id、パスワードは 8 文字以上、ユーザー名の形式と大文字小文字を区別しない一意性(§1.1)、セッションの発行・検証・削除(30 日の固定期限)。リカバリーコードの発行(128 ビット以上のランダム値、ハッシュ化して保存、登録の応答で一度だけ返す)。ログイン失敗は、理由を特定しない同一の文言と、同等の処理時間(ダミーのハッシュ検証)}}$ |
+| T6 | $\color{red}{\text{プロフィール}}$ | $\color{red}{\text{PATCH /me(表示名・ステータス。コードポイント数で検証)、PUT /me/avatar(2MB まで、jpg/png/gif/webp、マジックバイトで判定)、GET /users/:userId/avatar。ストレージのインターフェース(ローカルディスクの実装)。アバターの差し替え時は、同じトランザクションで、旧ファイルの storage\_key を storage\_deletions に積み、非同期で実体を削除して、失敗時は再試行する処理を、このタスクで作る。添付の行の削除でキューに積むトリガは、attachments のテーブルを作るフェーズ 4 で追加する}}$ |
+| T7 | $\color{red}{\text{フロントの骨格}}$ | $\color{red}{\text{React + Vite、ルーティング、TanStack Query、API クライアント(エラー形式の処理)、ログイン済みか否かで画面を分ける。開発サーバーから API へのプロキシ(Cookie が同一オリジンで届くように)}}$ |
+| T8 | $\color{red}{\text{認証・プロフィールの画面}}$ | $\color{red}{\text{登録(リカバリーコードを一度だけ表示し、保存したことの確認を求める)、ログイン、ログアウト、プロフィール設定(アバター・表示名・ステータス)}}$ |
+| T9 | $\color{red}{\text{テストの整備}}$ | $\color{red}{\text{結合テスト(実 DB): 登録の重複(大文字小文字違い)、ログイン失敗の同一応答、セッションの期限切れ、ログアウト後のアクセス拒否、アバターの形式・サイズの境界(2MB ちょうどと +1)、旧アバターの削除キューへの登録と再試行。アバターの認可(同じワークスペースにいない相手は 404)は、ワークスペースを作るフェーズ 2 で追加する。Playwright で、登録からログアウトまでの流れを 1 本}}$ |
+
+$\color{red}{\text{フェーズ 1 の完了条件: FR-001〜004 の受入基準を満たす(アバターの認可の部分は、フェーズ 2 で確認する)。リカバリーコードが、登録時に発行され、ハッシュで保存されている。CI が通る。}}$
+
+## 8. 未決事項(設計)
 
 | # | 論点 | 暫定案 |
 |---|---|---|
