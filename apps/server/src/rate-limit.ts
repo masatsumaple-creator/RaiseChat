@@ -59,6 +59,11 @@ export class RateLimiter {
     return true;
   }
 
+  /** そのキーの記憶を消す(成功したときに、失敗の回数を、数え直すため) */
+  reset(key: string): void {
+    this.entries.delete(key);
+  }
+
   /** 制限が解除されるまでの秒数(切り上げ)。制限中でなければ 0 */
   retryAfterSeconds(key: string): number {
     const entry = this.live(key);

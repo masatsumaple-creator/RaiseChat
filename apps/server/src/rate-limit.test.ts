@@ -43,6 +43,20 @@ describe('RateLimiter', () => {
     expect(limiter.consume('a')).toBe(true);
   });
 
+  it('reset は、そのキーだけの記憶を消し、数え直しになる', () => {
+    const { limiter } = setup({ limit: 1 });
+    limiter.consume('a');
+    limiter.consume('b');
+    expect(limiter.isLimited('a')).toBe(true);
+    limiter.reset('a');
+    expect(limiter.isLimited('a')).toBe(false);
+    expect(limiter.consume('a')).toBe(true);
+    // 別のキーは、そのまま
+    expect(limiter.isLimited('b')).toBe(true);
+    // 記憶のないキーを reset しても、何も起きない
+    limiter.reset('unknown');
+  });
+
   it('isLimited は、数えない。record だけが数える(失敗だけを数える使い方)', () => {
     const { limiter } = setup({ limit: 2 });
     for (let i = 0; i < 10; i++) expect(limiter.isLimited('a')).toBe(false);
