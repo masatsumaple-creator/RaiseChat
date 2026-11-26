@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   bigint,
+  boolean,
   check,
   index,
   integer,
@@ -12,7 +13,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
-// 設計書 §2 のスキーマのうち、フェーズ 1 で作るもの(T3)。
+// 設計書 §2 のスキーマのうち、フェーズ 1(T3)と、フェーズ 2 で作るもの(channels など)。
 // 残りのテーブルは、使うフェーズで追加する。
 
 /** ユーザー(アカウントはグローバル。要件定義書 §9 #3) */
@@ -114,5 +115,59 @@ export const storageDeletions = pgTable(
     index('storage_deletions_pending_idx')
       .on(t.id)
       .where(sql`${t.deletedAt} IS NULL`),
+  ],
+);
+
+/** チャンネル(パブリック・プライベート・DM)。DM は、フェーズ 3 で使う(列だけ先に持つ) */
+export const channels = pgTable(
+  'channels',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(),
+    name: text('name'), // dm は null
+    createdBy: uuid('created_by').references(() => users.id), // dm は null
+    isDefault: boolean('is_default').notNull().default(false), // general。退出・削除不可(FR-203)
+    dmKey: text('dm_key'), // DM の重複防止。小さい方の user_id + ':' + 大きい方
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('channels_type_check', sql`${t.type} IN ('public', 'private', 'dm')`),
+    check('channels_dm_name_check', sql`(${t.type} = 'dm') = (${t.name} IS NULL)`),
+    check('channels_dm_key_check', sql`(${t.type} = 'dm') = (${t.dmKey} IS NOT NULL)`),
+    check('channels_name_length', sql`${t.type} = 'dm' OR char_length(${t.name}) BETWEEN 1 AND 80`),
+    // 名前は、同一ワークスペース内で、大文字小文字を区別せず一意(FR-202)
+    uniqueIndex('channels_name_key')
+      .on(t.workspaceId, sql`lower(${t.name})`)
+      .where(sql`${t.type} <> 'dm'`),
+    uniqueIndex('channels_dm_key')
+      .on(t.workspaceId, t.dmKey)
+      .where(sql`${t.type} = 'dm'`),
+    // 既定チャンネル(general)は、ワークスペースに 1 つ
+    uniqueIndex('channels_default_key')
+      .on(t.workspaceId)
+      .where(sql`${t.isDefault}`),
+  ],
+);
+
+/** チャンネルの参加者と、チャンネル単位の既読位置・ミュート(FR-401, 403) */
+export const channelMembers = pgTable(
+  'channel_members',
+  {
+    channelId: uuid('channel_id')
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    lastReadMessageId: bigint('last_read_message_id', { mode: 'number' }).notNull().default(0),
+    muted: boolean('muted').notNull().default(false),
+    joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.channelId, t.userId] }),
+    index('channel_members_user_id_idx').on(t.userId),
   ],
 );

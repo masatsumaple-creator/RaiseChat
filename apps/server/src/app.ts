@@ -7,6 +7,7 @@ import { AppError, registerErrorHandling } from './errors';
 import { RateLimiter } from './rate-limit';
 import { registerAuthRoutes } from './routes/auth';
 import { registerProfileRoutes } from './routes/profile';
+import { registerWorkspaceRoutes } from './routes/workspaces';
 import { processStorageDeletions } from './storage/deletion-queue';
 import { LocalDiskStorage, type Storage } from './storage/storage';
 
@@ -99,6 +100,8 @@ export function buildApp({
       }).catch((error) => app.log.error({ err: error }, '削除キューの処理に失敗'));
     },
   });
+
+  registerWorkspaceRoutes(app, { db });
 
   return app;
 }
