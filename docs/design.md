@@ -44,7 +44,7 @@ $\color{red}{\text{以下は設計案。型は PostgreSQL。実装時は Drizzle
 ```sql
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- ユーザー(アカウントはグローバル。§9 #3)
+-- ユーザー(アカウントはグローバル。要件定義書 §9 #3)
 CREATE TABLE users (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   username           text NOT NULL CHECK (username ~ '^[A-Za-z0-9_]{3,32}$'),
@@ -151,7 +151,7 @@ CREATE INDEX messages_thread_idx ON messages (parent_id, id) WHERE parent_id IS 
 -- 検索(FR-110)。削除済みは索引に含めない
 CREATE INDEX messages_body_trgm_idx ON messages USING gin (body gin_trgm_ops) WHERE deleted_at IS NULL;
 
--- スレッド単位の既読位置(§9 #13)。最初の返信時に親投稿者と返信者の分を作る
+-- スレッド単位の既読位置(要件定義書 §9 #13)。最初の返信時に親投稿者と返信者の分を作る
 CREATE TABLE thread_members (
   root_message_id      bigint NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   user_id              uuid NOT NULL REFERENCES users(id),
@@ -192,7 +192,7 @@ CREATE TABLE mentions (
 );
 CREATE INDEX mentions_unread_idx ON mentions (user_id) WHERE read_at IS NULL;
 
--- 添付実体の削除キュー(§9 #8)
+-- 添付実体の削除キュー(要件定義書 §9 #8)
 CREATE TABLE storage_deletions (
   id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   storage_key   text NOT NULL,
@@ -226,7 +226,7 @@ CREATE TRIGGER attachments_enqueue_deletion
 - $\color{red}{\text{DM(FR-102)は type が dm のチャンネルで、dm\_key で同じ 2 人の重複作成を防ぐ。2 人の ChannelMember の行を、作成時に作る。}}$
 - $\color{red}{\text{チャンネルのミュートや既読位置は、ワークスペースを超えない(チャンネルが属するワークスペース内で完結する)。}}$
 - $\color{red}{\text{チャンネル削除(FR-303)は、チャンネルの行を削除すると、ChannelMember・メッセージ・返信・ThreadMember・リアクション・メンション・添付が連鎖して消え、添付の分はトリガにより StorageDeletion に積まれる。}}$
-- $\color{red}{\text{ワークスペースの削除は MVP 対象外(§9 #4)のため、ワークスペースから Membership・Invitation・Channel への連鎖は、将来のために設定してある。}}$
+- $\color{red}{\text{ワークスペースの削除は MVP 対象外(要件定義書 §9 #4)のため、ワークスペースから Membership・Invitation・Channel への連鎖は、将来のために設定してある。}}$
 - $\color{red}{\text{アバター画像の差し替え時(FR-004)は、同じトランザクションで、旧ファイルの storage\_key を StorageDeletion に積む。添付と同じ削除キューで扱う。}}$
 - $\color{red}{\text{オーナーは、Workspace.owner\_id と、role が owner の Membership の 2 か所で表す。作成時に同じトランザクションで両方を入れる。Membership 側には、1 ワークスペースにつき 1 人の一意制約がある。}}$
 
@@ -462,7 +462,7 @@ $\color{red}{\text{方針: WebSocket は、サーバーからクライアント�
 - $\color{red}{\text{ハンドシェイクで Origin を検証する。許可するオリジンと一致しない場合と、Origin ヘッダがない場合は、接続を拒否する(REST の CSRF 対策と同じ基準。§4.1)。}}$
 - $\color{red}{\text{ハンドシェイクの Cookie からセッションを引き、有効でなければ拒否する(401 相当)。接続したソケットには、ユーザー ID とセッションのトークンのハッシュを持たせる。}}$
 - $\color{red}{\text{1 ユーザーあたりの同時接続は 10 まで。超えた場合は、最も古い接続を切る。}}$
-- $\color{red}{\text{1 つのソケットで、ユーザーが所属する全ワークスペースの通知を受ける(アカウントはグローバル。§9 #3)。ワークスペースごとに接続を分けない。}}$
+- $\color{red}{\text{1 つのソケットで、ユーザーが所属する全ワークスペースの通知を受ける(アカウントはグローバル。要件定義書 §9 #3)。ワークスペースごとに接続を分けない。}}$
 
 ### 6.2 ルーム
 
@@ -494,6 +494,8 @@ $\color{red}{\text{REST の処理が DB にコミットされた後に、同じ�
 | ログアウト(FR-003) | $\color{red}{\text{先に更新}}$ | $\color{red}{\text{そのセッションのソケットだけを切断する}}$ | $\color{red}{\text{なし}}$ |
 
 $\color{red}{\text{パブリックチャンネルの削除の通知は、ws ルームへ送るため、そのチャンネルに参加していないワークスペースのメンバーにも届く。これは意図したもので、未参加のパブリックチャンネルの一覧(FR-203)から、削除されたチャンネルを消すため。通知の後に外すのは、ch ルームだけでよい。}}$
+
+$\color{red}{\text{DB のコミットと、ルームの更新の間に、プロセスが落ちた場合、ルームの状態が DB とずれる。落ちたプロセスは、接続も失うため、クライアントは再接続し、そのとき §6.2 の手順で、DB から、ルームに参加し直す。単一プロセスの小規模な構成では、これで足りるため、許容する。接続中に、プロセスが落ちずに、ルームの更新だけが失敗した場合は、更新の失敗を、エラーとしてログに出し、対象のソケットを切断して、再接続による補正に任せる。}}$
 
 $\color{red}{\text{セッションの期限切れ(30 日)は、接続を張ったまま超えた場合に備えて、1 時間ごとにソケットのセッションを DB で確認し、無効なら切断する。}}$
 
@@ -540,14 +542,14 @@ $\color{red}{\text{WebSocket は、メッセージの投稿(フェーズ 3)の�
 
 | フェーズ | 実装する内容 |
 |---|---|
-| 2 | $\color{red}{\text{接続(Origin・セッションの確認、同時接続の上限、期限の確認)、ルームへの参加と補正(§6.2)、所属の変化に対するルームの更新(§6.3 のうち、ワークスペース・チャンネル・招待に関する行)、イベント: workspace:added、channel 系、member:joined、user:updated、メッセージの投稿(FR-101)のための message:created、ログアウトでの切断(FR-003)}}$ |
+| 2 | $\color{red}{\text{接続(Origin・セッションの確認、同時接続の上限、期限の確認)、ルームへの参加と補正(§6.2)、所属の変化に対するルームの更新(§6.3 のうち、ワークスペース・チャンネル・招待に関する行)、イベント: workspace:added、channel 系(channel:member-left を含む。退出の通知のため)、member:joined、user:updated、メッセージの投稿(FR-101)のための message:created、ログアウトでの切断(FR-003)。フェーズ 1 で作った PATCH /me と PUT /me/avatar のハンドラに、user:updated の送信処理を足す(ワークスペースがないフェーズ 1 では、送信先がないため、フェーズ 2 で足す)}}$ |
 | 3 | $\color{red}{\text{message:updated、message:deleted、thread 系、reaction 系、mention:created、dm:created}}$ |
-| 5 | $\color{red}{\text{キックに関する行(workspace:removed、member:removed、channel:member-left)、read:updated}}$ |
+| 5 | $\color{red}{\text{キックに関する行(workspace:removed、member:removed、キック時の channel:member-left の送信。イベント自体はフェーズ 2 で作る)、read:updated}}$ |
 | 6 | $\color{red}{\text{パスワード再設定での切断(FR-005)}}$ |
 
 ## 7. フェーズ 1 の実装タスク
 
-$\color{red}{\text{対象は、FR-001〜004(登録・ログイン・ログアウト・プロフィール)と、基盤。あわせて、FR-005 のためのリカバリーコードの発行と保存(§9 #10)を行う。タスクは、上から順に、1 つずつ PR にする。各タスクの完了条件には、そのタスクの結合テスト(実 DB)を含め、テストなしでは、マージしない。CI が通ったら、次へ進む。}}$
+$\color{red}{\text{対象は、FR-001〜004(登録・ログイン・ログアウト・プロフィール)と、基盤。あわせて、FR-005 のためのリカバリーコードの発行と保存(要件定義書 §9 #10)を行う。タスクは、上から順に、1 つずつ PR にする。各タスクの完了条件には、そのタスクの結合テスト(実 DB)を含め、テストなしでは、マージしない。CI が通ったら、次へ進む。}}$
 
 | # | タスク | 完了条件 |
 |---|---|---|
@@ -561,7 +563,7 @@ $\color{red}{\text{対象は、FR-001〜004(登録・ログイン・ログアウ
 | T8 | $\color{red}{\text{フロントの骨格}}$ | $\color{red}{\text{React + Vite、ルーティング、TanStack Query、API クライアント(エラー形式の処理)、ログイン済みか否かで画面を分ける。開発サーバーから API へのプロキシ(Cookie が同一オリジンで届くように)。テスト: API クライアントのエラー処理の単体テスト}}$ |
 | T9 | $\color{red}{\text{認証・プロフィールの画面}}$ | $\color{red}{\text{登録(リカバリーコードを一度だけ表示し、保存したことの確認を求める)、ログイン、ログアウト、プロフィール設定(アバター・表示名・ステータス)。テスト: Playwright で、登録からログアウトまでの流れを 1 本}}$ |
 
-$\color{red}{\text{フェーズ 1 の完了条件: FR-001〜004 の受入基準を満たす(アバターの他ユーザーへの認可は、フェーズ 2 で確認する)。リカバリーコードが、登録時に発行され、ハッシュで保存されている。ただし、リカバリーコードを使った再設定の手段(POST /auth/recover。FR-005)は、フェーズ 6 で作るため、フェーズ 1 の時点では、パスワードを忘れた場合に、再設定する手段がない。これを、フェーズ 1 の範囲として許容する(§9 #10)。CI が通る。}}$
+$\color{red}{\text{フェーズ 1 の完了条件: FR-001〜004 の受入基準を満たす(アバターの他ユーザーへの認可は、フェーズ 2 で確認する)。リカバリーコードが、登録時に発行され、ハッシュで保存されている。ただし、リカバリーコードを使った再設定の手段(POST /auth/recover。FR-005)は、フェーズ 6 で作るため、フェーズ 1 の時点では、パスワードを忘れた場合に、再設定する手段がない。これを、フェーズ 1 の範囲として許容する(要件定義書 §9 #10)。CI が通る。}}$
 
 ## 8. 未決事項(設計)
 
