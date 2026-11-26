@@ -1,13 +1,17 @@
 import cookie from '@fastify/cookie';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Config } from './config';
+import type { Db } from './db/client';
 import { AppError, registerErrorHandling } from './errors';
+import { RateLimiter } from './rate-limit';
+import { registerAuthRoutes } from './routes/auth';
 
 /** 状態を変えない(CSRF の対象にならない)メソッド */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export interface BuildAppOptions {
   config: Config;
+  db: Db;
   /** false でログを止める(テスト用)。既定は、本番とそれ以外で、レベルを変える */
   logger?: boolean;
   /** ログの出力先(テストで、ログの内容を確かめるため)。未指定なら標準出力 */
@@ -22,7 +26,7 @@ export interface BuildAppOptions {
  * - trustProxy(§4.1): 信頼するプロキシが設定されたときだけ、X-Forwarded-For を使う
  * - ログから、Cookie などの秘密を除く
  */
-export function buildApp({ config, logger, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, db, logger, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger:
       logger === false
@@ -59,6 +63,13 @@ export function buildApp({ config, logger, logStream }: BuildAppOptions): Fastif
   });
 
   app.get('/health', async () => ({ status: 'ok' }));
+
+  registerAuthRoutes(app, {
+    db,
+    config,
+    // 登録は、同じ接続元から、15 分に 10 回まで(設計書 §4.1。回数は T5 で決めた)
+    registerLimiter: new RateLimiter({ limit: 10, windowMs: 15 * 60 * 1000 }),
+  });
 
   return app;
 }

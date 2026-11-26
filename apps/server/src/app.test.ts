@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from './app';
 import { loadConfig } from './config';
+import { createDb } from './db/client';
 import { AppError, parseWith } from './errors';
 import { RateLimiter, rateLimitGuard } from './rate-limit';
 import { sessionCookieOptions } from './session-cookie';
@@ -10,16 +11,21 @@ import { sessionCookieOptions } from './session-cookie';
 const ORIGIN = 'http://localhost:5173';
 
 const apps: FastifyInstance[] = [];
+const clients: { end(): Promise<void> }[] = [];
 
+/** このファイルのテストは、DB を使わない。接続は、クエリを送るまで開かれないため、実際には接続しない */
 function makeApp(env: Record<string, string> = {}, logStream?: { write(m: string): void }) {
   const config = loadConfig({ ALLOWED_ORIGIN: ORIGIN, ...env });
-  const app = buildApp({ config, logger: logStream ? undefined : false, logStream });
+  const { db, client } = createDb(config.databaseUrl);
+  clients.push(client);
+  const app = buildApp({ config, db, logger: logStream ? undefined : false, logStream });
   apps.push(app);
   return { app, config };
 }
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
+  await Promise.all(clients.splice(0).map((client) => client.end()));
 });
 
 describe('GET /health', () => {
