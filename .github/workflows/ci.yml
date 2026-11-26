@@ -60,3 +60,10 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      # E2E(Playwright)。専用の DB(raisechat_e2e)と専用ポートで、サーバーと画面を起動する
+      - name: Install Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: E2E
+        run: pnpm test:e2e

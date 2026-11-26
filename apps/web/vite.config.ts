@@ -9,7 +9,7 @@ const API_TARGET = process.env['API_TARGET'] ?? 'http://localhost:3000';
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 5173,
+    port: Number(process.env['WEB_PORT'] ?? 5173), // E2E テストは、別のポートで起動する
     strictPort: true, // ALLOWED_ORIGIN と食い違わないよう、ポートが塞がっていたら失敗させる
     proxy: { '/api': { target: API_TARGET } },
   },

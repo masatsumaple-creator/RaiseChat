@@ -47,6 +47,15 @@ pnpm dev:server        # apps/server を、ファイルの変更を監視しな�
 
 `GET /health` で、動作を確認できる。GET 以外のリクエストは、`ALLOWED_ORIGIN` に一致する `Origin` ヘッダがないと、403 になる(CSRF 対策。設計書 §4.1)。
 
+## E2E テスト(Playwright)
+
+```sh
+pnpm exec playwright install chromium   # 初回のみ
+pnpm test:e2e                           # 先に pnpm db:up が必要
+```
+
+専用の DB(`raisechat_e2e`。毎回、作り直す)と専用のポート(サーバー 3100・画面 5273)で、サーバーと画面を自動で起動する。開発用の DB・ポートには、触れない。
+
 ## 画面(フロント)の起動
 
 ```sh

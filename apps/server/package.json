@@ -8,6 +8,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file-if-exists=../../.env --import tsx src/db/migrate.ts",
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/index.ts",
+    "e2e": "node --import tsx src/e2e.ts",
     "start": "node --env-file-if-exists=../../.env --import tsx src/index.ts"
   },
   "dependencies": {

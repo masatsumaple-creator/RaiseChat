@@ -1,23 +1,27 @@
 import { Route, Routes } from 'react-router-dom';
 import { useMe } from './api/me';
 import { PublicOnly, RequireAuth } from './auth/guards';
+import { Layout } from './pages/Layout';
+import { LoginPage } from './pages/LoginPage';
+import { ProfilePage } from './pages/ProfilePage';
+import { RegisterPage } from './pages/RegisterPage';
 
-// T9 で、実際の画面に置き換える(ここは、画面の振り分けの確認用の仮の画面)
-function LoginPage() {
-  return <h1>ログイン</h1>;
-}
-
-function RegisterPage() {
-  return <h1>アカウント登録</h1>;
-}
-
+// T9 の時点では、ホームは仮の画面(ワークスペースは、フェーズ 2 で作る)
 function HomePage() {
   const { data } = useMe();
-  return <h1>ようこそ、{data?.displayName}さん</h1>;
+  return (
+    <main>
+      <h1>ようこそ、{data?.displayName}さん</h1>
+    </main>
+  );
 }
 
 function NotFoundPage() {
-  return <h1>ページが見つかりません</h1>;
+  return (
+    <main>
+      <h1>ページが見つかりません</h1>
+    </main>
+  );
 }
 
 export function App() {
@@ -28,7 +32,10 @@ export function App() {
         <Route path="/register" element={<RegisterPage />} />
       </Route>
       <Route element={<RequireAuth />}>
-        <Route path="/" element={<HomePage />} />
+        <Route element={<Layout />}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/profile" element={<ProfilePage />} />
+        </Route>
       </Route>
       <Route path="*" element={<NotFoundPage />} />
     </Routes>

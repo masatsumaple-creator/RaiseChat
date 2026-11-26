@@ -8,3 +8,6 @@ coverage/
 # ローカルのファイル保存先(開発用)
 /storage/
 /apps/server/storage/
+# Playwright の出力
+test-results/
+playwright-report/
