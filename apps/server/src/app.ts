@@ -6,6 +6,7 @@ import type { Db } from './db/client';
 import { AppError, registerErrorHandling } from './errors';
 import { RateLimiter } from './rate-limit';
 import { registerAuthRoutes } from './routes/auth';
+import { registerAttachmentFileRoutes } from './routes/attachment-files';
 import { registerChannelRoutes } from './routes/channels';
 import { registerInvitationRoutes } from './routes/invitations';
 import { registerMessageRoutes } from './routes/messages';
@@ -142,6 +143,7 @@ export function buildApp({
     onStorageDeletionQueued: kickStorageDeletions,
   });
   registerThreadRoutes(app, { db, realtime });
+  registerAttachmentFileRoutes(app, { db, storage });
   registerReactionRoutes(app, { db, realtime });
   registerInvitationRoutes(app, {
     db,
