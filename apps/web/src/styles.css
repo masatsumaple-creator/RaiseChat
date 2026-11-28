@@ -70,3 +70,25 @@ td {
   border-bottom: 1px solid #eee;
   text-align: left;
 }
+
+.markdown p {
+  margin: 0.25em 0;
+}
+.markdown pre {
+  overflow-x: auto;
+  padding: 0.5em;
+  background: #f4f4f4;
+}
+.markdown code {
+  font-family: ui-monospace, monospace;
+}
+.markdown blockquote {
+  margin: 0.25em 0;
+  padding-left: 0.75em;
+  border-left: 3px solid #ccc;
+}
+.message-actions {
+  display: flex;
+  gap: 0.5em;
+  align-items: center;
+}

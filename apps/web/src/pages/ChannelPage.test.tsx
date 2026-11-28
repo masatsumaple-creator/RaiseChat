@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiError, json, mockApi } from '../test/mock-api';
+import { apiError, json, mockApi, type Handler } from '../test/mock-api';
 import { ChannelNav } from './ChannelNav';
 import { ChannelPage } from './ChannelPage';
 import { WorkspaceShell } from './WorkspaceShell';
@@ -94,11 +94,7 @@ describe('ChannelNav', () => {
 });
 
 describe('ChannelPage(FR-101, 203, 204)', () => {
-  function renderChannel(
-    chId: string,
-    routes: Record<string, () => Response | Promise<Response>>,
-    workspace = WS,
-  ) {
+  function renderChannel(chId: string, routes: Record<string, Handler>, workspace = WS) {
     const api = mockApi({
       'GET /api/me': () => json(200, ME),
       'GET /api/workspaces': () => json(200, [workspace]),
@@ -126,6 +122,107 @@ describe('ChannelPage(FR-101, 203, 204)', () => {
     'GET /api/channels/c1/members': () => json(200, []),
     'GET /api/channels/c2/members': () => json(200, []),
   };
+
+  describe('編集・削除・整形(FR-103, 104, 106)', () => {
+    const own = (id: number, body: string, extra: Partial<MessageResponse> = {}) => ({
+      ...message(id, body, 'u1'),
+      ...extra,
+    });
+    const page =
+      (...messages: unknown[]) =>
+      () =>
+        json(200, { messages, nextCursor: null });
+    const done = () => new Response(null, { status: 204 });
+
+    it('本文を、マークダウンで整形して表示する。生の HTML は描画せず、「編集済み」を出す', async () => {
+      renderChannel('c1', {
+        ...base,
+        'GET /api/channels/c1/messages': page(message(2, '**太字** と <script>x</script>', 'u9'), {
+          ...message(1, '古い', 'u9'),
+          editedAt: '2026-01-01T10:00:00.000Z',
+        }),
+      });
+      const list = await screen.findByRole('list', { name: 'メッセージ一覧' });
+      await waitFor(() => expect(within(list).getByText('太字').tagName).toBe('STRONG'));
+      expect(list.querySelector('script')).toBeNull();
+      expect(within(list).getAllByText('(編集済み)')).toHaveLength(1);
+    });
+
+    it('編集と削除は、自分のメッセージにだけ出る', async () => {
+      renderChannel('c1', {
+        ...base,
+        'GET /api/channels/c1/messages': page(message(2, '他人', 'u9'), own(1, '自分')),
+      });
+      await screen.findByText('自分');
+      expect(screen.getAllByRole('button', { name: '編集' })).toHaveLength(1);
+      expect(screen.getAllByRole('button', { name: '削除' })).toHaveLength(1);
+    });
+
+    it('編集: 入力欄に本文を戻して保存すると、表示が置き換わり、「編集済み」が付く', async () => {
+      const api = renderChannel('c1', {
+        ...base,
+        'GET /api/channels/c1/messages': page(own(1, '元')),
+        'PATCH /api/messages/1': ({ body }) => {
+          expect(body).toEqual({ body: '直した' });
+          return json(200, own(1, '直した', { editedAt: '2026-01-01T10:00:00.000Z' }));
+        },
+      });
+      await screen.findByText('元');
+      fireEvent.click(screen.getByRole('button', { name: '編集' }));
+      const box = screen.getByLabelText('メッセージを編集') as HTMLTextAreaElement;
+      expect(box.value).toBe('元');
+      fireEvent.change(box, { target: { value: '直した' } });
+      fireEvent.click(screen.getByRole('button', { name: '保存' }));
+      await waitFor(() => expect(screen.queryByLabelText('メッセージを編集')).toBeNull());
+      expect(screen.getByText('直した')).toBeTruthy();
+      expect(screen.getByText('(編集済み)')).toBeTruthy();
+      expect(api.calls).toContain('PATCH /api/messages/1');
+    });
+
+    it('編集の失敗は、エラーを示し、編集欄を残す', async () => {
+      renderChannel('c1', {
+        ...base,
+        'GET /api/channels/c1/messages': page(own(1, '元')),
+        'PATCH /api/messages/1': () => apiError(404, 'not_found', '見つかりません。'),
+      });
+      await screen.findByText('元');
+      fireEvent.click(screen.getByRole('button', { name: '編集' }));
+      fireEvent.change(screen.getByLabelText('メッセージを編集'), { target: { value: '直した' } });
+      fireEvent.click(screen.getByRole('button', { name: '保存' }));
+      expect((await screen.findByRole('alert')).textContent).toBe('見つかりません。');
+      expect(screen.getByLabelText('メッセージを編集')).toBeTruthy();
+    });
+
+    it('削除は、確認してから行う。キャンセルなら、何も起きない', async () => {
+      const api = renderChannel('c1', {
+        ...base,
+        'GET /api/channels/c1/messages': page(own(1, '消すもの')),
+        'DELETE /api/messages/1': done,
+      });
+      await screen.findByText('消すもの');
+      fireEvent.click(screen.getByRole('button', { name: '削除' }));
+      fireEvent.click(screen.getByRole('button', { name: 'キャンセル' }));
+      expect(api.calls).not.toContain('DELETE /api/messages/1');
+      fireEvent.click(screen.getByRole('button', { name: '削除' }));
+      expect(screen.getByText('このメッセージを削除しますか?')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: '削除する' }));
+      await waitFor(() => expect(screen.queryByText('消すもの')).toBeNull());
+      expect(api.calls).toContain('DELETE /api/messages/1');
+    });
+
+    it('返信が残っているメッセージを削除すると、「削除されました」の親になり、返信数が残る', async () => {
+      renderChannel('c1', {
+        ...base,
+        'GET /api/channels/c1/messages': page(own(1, '親', { replyCount: 2 })),
+        'DELETE /api/messages/1': done,
+      });
+      await screen.findByText('親');
+      fireEvent.click(screen.getByRole('button', { name: '削除' }));
+      fireEvent.click(screen.getByRole('button', { name: '削除する' }));
+      await screen.findByText(/このメッセージは、削除されました。/);
+      expect(screen.getByText('(返信 2 件)')).toBeTruthy();
+    });
+  });
 
   it('メッセージを、古い順に表示する(API は新しい順)', async () => {
     renderChannel('c1', {
