@@ -8,6 +8,7 @@ import { RateLimiter } from './rate-limit';
 import { registerAuthRoutes } from './routes/auth';
 import { registerAttachmentFileRoutes } from './routes/attachment-files';
 import { registerChannelRoutes } from './routes/channels';
+import { registerKickRoutes } from './routes/kick';
 import { registerInvitationRoutes } from './routes/invitations';
 import { registerMessageRoutes } from './routes/messages';
 import { registerSearchRoutes } from './routes/search';
@@ -137,6 +138,7 @@ export function buildApp({
 
   registerWorkspaceRoutes(app, { db, realtime });
   registerChannelRoutes(app, { db, realtime });
+  registerKickRoutes(app, { db, realtime });
   registerMessageRoutes(app, {
     db,
     realtime,

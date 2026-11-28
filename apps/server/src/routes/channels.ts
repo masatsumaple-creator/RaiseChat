@@ -26,6 +26,20 @@ export interface ChannelRouteDeps {
 }
 
 const notFound = () => new AppError(404, 'not_found', '見つかりません。');
+
+/** そのワークスペースに、active で所属しているか。所属の行を、共有ロックする(同時のキックは、ロックの解放まで待つ) */
+async function isActiveMember(
+  tx: Pick<Db, 'select'>,
+  workspaceId: string,
+  userId: string,
+): Promise<boolean> {
+  const [row] = await tx
+    .select({ status: memberships.status })
+    .from(memberships)
+    .where(and(eq(memberships.workspaceId, workspaceId), eq(memberships.userId, userId)))
+    .for('share');
+  return row?.status === 'active';
+}
 const channelIdSchema = z.uuid();
 
 type ChannelRow = typeof channels.$inferSelect;
@@ -208,6 +222,16 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       let created: ChannelRow;
       try {
         created = await db.transaction(async (tx) => {
+          // 2 人の所属の行を共有ロックして、同時のキックとの順序を決める
+          for (const id of [me, targetId].sort()) {
+            if (!(await isActiveMember(tx, workspaceId, id))) {
+              throw new AppError(
+                400,
+                'bad_request',
+                '同じワークスペースのメンバーだけ、指定できます。',
+              );
+            }
+          }
           const [row] = await tx
             .insert(channels)
             .values({ workspaceId, type: 'dm', name: null, createdBy: null, dmKey })
@@ -341,12 +365,18 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
         throw new AppError(403, 'forbidden', 'このワークスペースは、利用できません。');
       }
 
-      // (3) 参加する(参加済みなら、何もせず成功)
-      const inserted = await db
-        .insert(channelMembers)
-        .values({ channelId: row.channel.id, userId })
-        .onConflictDoNothing()
-        .returning({ userId: channelMembers.userId });
+      // (3) 参加する(参加済みなら、何もせず成功)。所属の行を共有ロックして、同時のキックとの順序を決める
+      // (キックされた後に、ChannelMember が作られて、残らないように)
+      const inserted = await db.transaction(async (tx) => {
+        if (!(await isActiveMember(tx, row.channel.workspaceId, userId))) {
+          throw new AppError(403, 'forbidden', 'このワークスペースは、利用できません。');
+        }
+        return tx
+          .insert(channelMembers)
+          .values({ channelId: row.channel.id, userId })
+          .onConflictDoNothing()
+          .returning({ userId: channelMembers.userId });
+      });
       const body = toChannelResponse(row.channel);
       // 新しく参加したときだけ、ルームを更新して(先に更新)、通知する(設計書 §6.3)
       if (inserted.length > 0) {
@@ -489,12 +519,21 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
           '招待できるのは、同じワークスペースのメンバーだけです。',
         );
       }
-      // (9) 招待する(すでに参加していれば、成功)
-      const inserted = await db
-        .insert(channelMembers)
-        .values({ channelId: channel.id, userId: targetId })
-        .onConflictDoNothing()
-        .returning({ userId: channelMembers.userId });
+      // (9) 招待する(すでに参加していれば、成功)。対象の所属の行を共有ロックして、同時のキックとの順序を決める
+      const inserted = await db.transaction(async (tx) => {
+        if (!(await isActiveMember(tx, channel.workspaceId, targetId))) {
+          throw new AppError(
+            400,
+            'bad_request',
+            '招待できるのは、同じワークスペースのメンバーだけです。',
+          );
+        }
+        return tx
+          .insert(channelMembers)
+          .values({ channelId: channel.id, userId: targetId })
+          .onConflictDoNothing()
+          .returning({ userId: channelMembers.userId });
+      });
       if (inserted.length > 0) {
         await announceJoined(channel.id, targetId, toChannelResponse(channel));
       }
