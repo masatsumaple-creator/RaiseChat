@@ -10,6 +10,7 @@ import { registerAttachmentFileRoutes } from './routes/attachment-files';
 import { registerChannelRoutes } from './routes/channels';
 import { registerInvitationRoutes } from './routes/invitations';
 import { registerMessageRoutes } from './routes/messages';
+import { registerSearchRoutes } from './routes/search';
 import { registerThreadRoutes } from './routes/threads';
 import { registerReactionRoutes } from './routes/reactions';
 import { registerProfileRoutes } from './routes/profile';
@@ -143,6 +144,7 @@ export function buildApp({
     onStorageDeletionQueued: kickStorageDeletions,
   });
   registerThreadRoutes(app, { db, realtime });
+  registerSearchRoutes(app, { db });
   registerAttachmentFileRoutes(app, { db, storage });
   registerReactionRoutes(app, { db, realtime });
   registerInvitationRoutes(app, {

@@ -43,7 +43,7 @@ function toChannelResponse(row: ChannelRow, peer: DmPeer | null = null): Channel
 }
 
 /** DM の相手(me から見た、もう 1 人)を、チャンネルごとに取る */
-async function loadPeers(db: Db, me: string, dmIds: string[]): Promise<Map<string, DmPeer>> {
+export async function loadPeers(db: Db, me: string, dmIds: string[]): Promise<Map<string, DmPeer>> {
   const result = new Map<string, DmPeer>();
   if (dmIds.length === 0) return result;
   const rows = await db

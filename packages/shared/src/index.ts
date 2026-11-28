@@ -58,6 +58,13 @@ export { extractMentionNames } from './mention';
 export type { MentionCreatedPayload, MentionResponse } from './mention';
 export { EMOJI_MAX_CODE_POINTS, MAX_REACTION_KINDS_PER_MESSAGE, isSingleEmoji } from './emoji';
 export type { ReactionSummary } from './emoji';
+export {
+  SEARCH_MAX_LENGTH,
+  SEARCH_MIN_LENGTH,
+  SEARCH_PAGE_SIZE,
+  searchQuerySchema,
+} from './search';
+export type { SearchResponse, SearchResult } from './search';
 export { createInvitationSchema } from './invitation';
 export type {
   CreateInvitationRequest,
