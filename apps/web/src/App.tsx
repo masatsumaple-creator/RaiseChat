@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router-dom';
 import { PublicOnly, RequireAuth } from './auth/guards';
 import { ChannelPage } from './pages/ChannelPage';
 import { BrowseChannelsPage, NewChannelPage, WorkspaceIndex } from './pages/ChannelForms';
+import { NewDmPage } from './pages/NewDmPage';
 import { HomePage, NewWorkspacePage } from './pages/HomePage';
 import { InvitationsPage } from './pages/InvitationsPage';
 import { InvitePage } from './pages/InvitePage';
@@ -37,6 +38,7 @@ export function App() {
             <Route path="c/:chId" element={<ChannelPage />} />
             <Route path="channels/new" element={<NewChannelPage />} />
             <Route path="channels/browse" element={<BrowseChannelsPage />} />
+            <Route path="dms/new" element={<NewDmPage />} />
             <Route path="members" element={<WorkspaceHome />} />
             <Route path="invitations" element={<InvitationsPage />} />
           </Route>

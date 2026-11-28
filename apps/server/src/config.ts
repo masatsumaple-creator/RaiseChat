@@ -22,6 +22,8 @@ const envSchema = z.object({
   TRUSTED_PROXIES: z.string().default(''),
   /** アップロードされたファイルの保存先(ローカルディスク。設計書 §1)。相対パスは、起動した場所から */
   STORAGE_DIR: z.string().min(1).default('./storage'),
+  /** 登録の回数の上限(同じ接続元から、15 分あたり)。既定は 10。E2E テストが、多くのユーザーを作るために、引き上げる */
+  REGISTER_RATE_LIMIT: z.coerce.number().int().min(1).default(10),
 });
 
 export interface Config {
@@ -32,6 +34,7 @@ export interface Config {
   allowedOrigins: string[];
   trustedProxies: string[];
   storageDir: string;
+  registerRateLimit: number;
   isProduction: boolean;
 }
 
@@ -74,6 +77,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     allowedOrigins,
     trustedProxies: splitList(e.TRUSTED_PROXIES),
     storageDir: e.STORAGE_DIR,
+    registerRateLimit: e.REGISTER_RATE_LIMIT,
     isProduction: e.NODE_ENV === 'production',
   };
 }

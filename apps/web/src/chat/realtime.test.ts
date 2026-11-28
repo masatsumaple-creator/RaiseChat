@@ -284,3 +284,24 @@ describe('resyncAfterReconnect(再接続のあとの取り直し。設計書 §6
     expect(keys).toEqual(expect.arrayContaining(['workspaces', 'channels', 'messages']));
   });
 });
+
+describe('applyServerEvents: dm:created', () => {
+  it('そのワークスペースのチャンネル一覧(DM を含む)を、取り直す対象にする', () => {
+    const client = new QueryClient();
+    client.setQueryData(channelsKey('ws1'), []);
+    client.setQueryData(channelsKey('ws2'), []);
+    const { socket, emit } = fakeSocket();
+    applyServerEvents(socket, client);
+    emit('dm:created', {
+      id: 'd1',
+      workspaceId: 'ws1',
+      type: 'dm',
+      name: null,
+      isDefault: false,
+      createdBy: null,
+      peer: { id: 'u9', username: 'hanako', displayName: '花子', avatarUrl: null },
+    });
+    expect(client.getQueryState(channelsKey('ws1'))!.isInvalidated).toBe(true);
+    expect(client.getQueryState(channelsKey('ws2'))!.isInvalidated).toBe(false);
+  });
+});

@@ -43,6 +43,39 @@ describe('Markdown の整形(FR-106)', () => {
   });
 });
 
+describe('メンションの強調(FR-109)', () => {
+  function withMentions(source: string, mentions: string[]): HTMLElement {
+    const { container } = render(<Markdown mentions={mentions}>{source}</Markdown>);
+    return container;
+  }
+
+  it('有効なメンションだけを強調する。大文字小文字は区別しない。ほかの @ は、そのまま', () => {
+    const c = withMentions('やあ @Alice と @nobody と bob@alice.example', ['alice']);
+    expect([...c.querySelectorAll('.mention')].map((e) => e.textContent)).toEqual(['@Alice']);
+    expect(c.textContent).toBe('やあ @Alice と @nobody と bob@alice.example');
+  });
+
+  it('太字・リストの中でも強調する。インラインコードとコードブロックの中は、強調しない', () => {
+    const c = withMentions('**@alice**\n\n- @alice\n\n`@alice`\n\n```\n@alice\n```', ['alice']);
+    expect(c.querySelectorAll('strong .mention')).toHaveLength(1);
+    expect(c.querySelectorAll('li .mention')).toHaveLength(1);
+    expect(c.querySelectorAll('code .mention, pre .mention')).toHaveLength(0);
+    expect(c.querySelectorAll('.mention')).toHaveLength(2);
+  });
+
+  it('有効なメンションがなければ、強調しない(@名前は、通常の文字)', () => {
+    expect(withMentions('@alice', []).querySelector('.mention')).toBeNull();
+  });
+
+  it('強調は、本文由来の HTML・属性を、増やさない', () => {
+    const c = withMentions('<span class="x" onclick="y()">@alice</span>', ['alice']);
+    for (const el of c.querySelectorAll('*')) {
+      for (const attr of el.getAttributeNames()) expect(attr).not.toMatch(/^on/i);
+    }
+    expect(c.querySelector('[class="x"]')).toBeNull();
+  });
+});
+
 describe('Markdown の無害化(XSS。設計書 §5.6)', () => {
   const dangerous = [
     '<script>window.__xss = 1</script>',

@@ -63,7 +63,7 @@ export function MessageItem({
           onCancel={() => setEditing(false)}
         />
       ) : (
-        <Markdown>{m.body}</Markdown>
+        <Markdown mentions={m.mentions.map((x) => x.username)}>{m.body}</Markdown>
       )}
       <ReactionBar reactions={m.reactions} myId={myId} names={names} onToggle={onToggleReaction} />
       {onOpenThread && (

@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { MessageResponse } from '@raisechat/shared';
-import { useLayoutEffect, useRef } from 'react';
+import { useCallback, useLayoutEffect, useRef } from 'react';
 import {
   addReaction,
   channelMembersKey,
@@ -38,6 +38,11 @@ export function useChannelNames(channelId: string): NameMap {
   return new Map((members.data ?? []).map((m) => [m.id, m.displayName]));
 }
 
+/** メンションの候補を取る関数(チャンネルごとに、同じ関数を使い回す) */
+export function useCandidates(channelId: string) {
+  return useCallback((q: string) => listChannelMembers(channelId, undefined, q), [channelId]);
+}
+
 /**
  * チャンネルのメッセージ(FR-101)。古い順に表示し、新しい投稿は、WebSocket と投稿の応答で加わる。
  * onOpenThread で、スレッドのパネルを開く(FR-105)。
@@ -52,6 +57,7 @@ export function MessageList({
   const queryClient = useQueryClient();
   const { data: me } = useMe();
   const names = useChannelNames(channelId);
+  const fetchCandidates = useCandidates(channelId);
   const query = useInfiniteQuery({
     queryKey: messagesKey(channelId),
     queryFn: ({ pageParam, signal }) => listMessages(channelId, pageParam, signal),
@@ -178,7 +184,7 @@ export function MessageList({
           )}
         </ul>
       </div>
-      <MessageComposer onSend={send} />
+      <MessageComposer onSend={send} fetchCandidates={fetchCandidates} />
     </div>
   );
 }

@@ -116,6 +116,10 @@ export function applyServerEvents(socket: Socket<ServerToClientEvents>, queryCli
   socket.on('member:joined', ({ workspaceId }) => {
     void queryClient.invalidateQueries({ queryKey: membersKey(workspaceId) });
   });
+  // DM の作成(自分が作った別のタブにも、相手にも届く)。一覧を取り直すと、サイドバーに出る
+  socket.on('dm:created', (channel) => {
+    void queryClient.invalidateQueries({ queryKey: channelsKey(channel.workspaceId) });
+  });
   socket.on('channel:created', (channel) => {
     void queryClient.invalidateQueries({ queryKey: channelsKey(channel.workspaceId) });
   });

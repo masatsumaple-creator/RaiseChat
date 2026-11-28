@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiError, json, mockApi, type Handler } from '../test/mock-api';
 import { ChannelNav } from './ChannelNav';
 import { ChannelPage } from './ChannelPage';
+import { NewDmPage } from './NewDmPage';
 import { WorkspaceShell } from './WorkspaceShell';
 
 const ME = { id: 'u1', username: 'taro', displayName: '太郎', statusText: '', avatarUrl: null };
@@ -73,6 +74,35 @@ describe('ChannelNav', () => {
     ]);
     expect(links[0]!.getAttribute('aria-current')).toBeNull();
     expect(links[1]!.getAttribute('aria-current')).toBe('page');
+  });
+
+  it('DM は、チャンネルとは別の一覧に、相手の名前で出る。「DM を始める」への導線もある', () => {
+    render(
+      <MemoryRouter>
+        <ChannelNav
+          workspace={WS}
+          channels={[
+            channel('c1', 'general', { isDefault: true }),
+            channel('d1', '', {
+              type: 'dm',
+              name: null,
+              peer: { id: 'u9', username: 'hanako', displayName: '花子', avatarUrl: null },
+            }),
+          ]}
+          currentChannelId="d1"
+        />
+      </MemoryRouter>,
+    );
+    const chans = within(screen.getByRole('navigation', { name: 'チャンネル' }));
+    expect(chans.queryByText('@ 花子')).toBeNull();
+    const dms = within(
+      screen.getByRole('navigation', { name: 'ダイレクトメッセージ' }),
+    ).getAllByRole('link');
+    expect(dms.map((l) => [l.textContent, l.getAttribute('href')])).toEqual([
+      ['@ 花子', '/w/ws1/c/d1'],
+      ['DM を始める', '/w/ws1/dms/new'],
+    ]);
+    expect(dms[0]!.getAttribute('aria-current')).toBe('page');
   });
 
   it('招待リンクの管理は、オーナーにだけ出る', () => {
@@ -505,5 +535,100 @@ describe('ChannelPage(FR-101, 203, 204)', () => {
     const alerts = await screen.findAllByRole('alert');
     expect(alerts.some((a) => a.textContent?.includes('失敗しました'))).toBe(true);
     expect(screen.getByRole('button', { name: '再試行' })).toBeTruthy();
+  });
+});
+
+describe('ダイレクトメッセージの画面(FR-102)', () => {
+  const peer = { id: 'u9', username: 'hanako', displayName: '花子', avatarUrl: null };
+  const dm = channel('d1', '', { type: 'dm', name: null, peer });
+
+  function renderAt(path: string, routes: Record<string, Handler>) {
+    const api = mockApi({
+      'GET /api/me': () => json(200, ME),
+      'GET /api/workspaces': () => json(200, [WS]),
+      'GET /api/workspaces/ws1': () => json(200, WS),
+      'GET /api/workspaces/ws1/channels': () =>
+        json(200, [channel('c1', 'general', { isDefault: true }), dm]),
+      ...routes,
+    });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/w/:wsId" element={<WorkspaceShell />}>
+              <Route path="c/:chId" element={<ChannelPage />} />
+              <Route path="dms/new" element={<NewDmPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return api;
+  }
+
+  it('DM の画面: 見出しは相手の名前。退出と参加者の操作は出ない。メッセージを読める', async () => {
+    renderAt('/w/ws1/c/d1', {
+      'GET /api/channels/d1/messages': () =>
+        json(200, { messages: [message(1, 'やあ', 'u9')], nextCursor: null }),
+      'GET /api/channels/d1/members': () => json(200, []),
+    });
+    expect(await screen.findByRole('heading', { name: '@ 花子' })).toBeTruthy();
+    await screen.findByText('やあ');
+    expect(screen.queryByRole('button', { name: '退出' })).toBeNull();
+    expect(screen.queryByText(/^参加者/)).toBeNull();
+  });
+
+  it('DM を始める: 自分以外のメンバーから選ぶと、DM を作って開く', async () => {
+    const api = renderAt('/w/ws1/dms/new', {
+      'GET /api/workspaces/ws1/members': () =>
+        json(200, [
+          {
+            id: 'u1',
+            username: 'taro',
+            displayName: '太郎',
+            statusText: '',
+            avatarUrl: null,
+            role: 'member',
+          },
+          {
+            id: 'u9',
+            username: 'hanako',
+            displayName: '花子',
+            statusText: '',
+            avatarUrl: null,
+            role: 'member',
+          },
+        ]),
+      'POST /api/workspaces/ws1/dms': ({ body }) => {
+        expect(body).toEqual({ userId: 'u9' });
+        return json(201, dm);
+      },
+      'GET /api/channels/d1/messages': () => json(200, { messages: [], nextCursor: null }),
+      'GET /api/channels/d1/members': () => json(200, []),
+    });
+    const button = await screen.findByRole('button', { name: '花子(@hanako)' });
+    await waitFor(() => expect(screen.queryByText(/太郎/)).toBeNull()); // 自分は出さない
+    fireEvent.click(button);
+    expect(await screen.findByRole('heading', { name: '@ 花子' })).toBeTruthy();
+    expect(api.calls).toContain('POST /api/workspaces/ws1/dms');
+  });
+
+  it('DM の作成に失敗したら、エラーを示す', async () => {
+    renderAt('/w/ws1/dms/new', {
+      'GET /api/workspaces/ws1/members': () =>
+        json(200, [
+          {
+            id: 'u9',
+            username: 'hanako',
+            displayName: '花子',
+            statusText: '',
+            avatarUrl: null,
+            role: 'member',
+          },
+        ]),
+      'POST /api/workspaces/ws1/dms': () => apiError(400, 'bad_request', '指定できません。'),
+    });
+    fireEvent.click(await screen.findByRole('button', { name: '花子(@hanako)' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('指定できません。');
   });
 });
