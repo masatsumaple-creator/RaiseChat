@@ -11,6 +11,7 @@ import { registerInvitationRoutes } from './routes/invitations';
 import { registerMessageRoutes } from './routes/messages';
 import { registerProfileRoutes } from './routes/profile';
 import { registerWorkspaceRoutes } from './routes/workspaces';
+import { Realtime, type RealtimeOptions } from './realtime/realtime';
 import { processStorageDeletions } from './storage/deletion-queue';
 import { LocalDiskStorage, type Storage } from './storage/storage';
 
@@ -26,6 +27,15 @@ export interface BuildAppOptions {
   logger?: boolean;
   /** ログの出力先(テストで、ログの内容を確かめるため)。未指定なら標準出力 */
   logStream?: { write(message: string): void };
+  /** WebSocket の設定(テストで、上限や確認の間隔を変えるため) */
+  realtime?: Pick<RealtimeOptions, 'maxConnectionsPerUser' | 'sessionCheckIntervalMs'>;
+}
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    /** WebSocket(Socket.IO)の基盤。REST の処理から、ルームの更新と通知を行う(設計書 §6) */
+    realtime: Realtime;
+  }
 }
 
 /**
@@ -42,6 +52,7 @@ export function buildApp({
   storage = new LocalDiskStorage(config.storageDir),
   logger,
   logStream,
+  realtime: realtimeOptions,
 }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger:
@@ -82,9 +93,21 @@ export function buildApp({
 
   app.get('/health', async () => ({ status: 'ok' }));
 
+  // WebSocket は、HTTP サーバーに相乗りする(同じポート・同じ Origin の検証)
+  const realtime = new Realtime(app.server, { db, config, logger: app.log, ...realtimeOptions });
+  app.decorate('realtime', realtime);
+  // 終了のとき、先に全接続を閉じる(開いたままの接続で、終了が止まらないように)
+  app.addHook('preClose', async () => {
+    realtime.io.disconnectSockets(true);
+  });
+  app.addHook('onClose', async () => {
+    await realtime.close();
+  });
+
   registerAuthRoutes(app, {
     db,
     config,
+    realtime,
     // 登録は、同じ接続元から、15 分に 10 回まで(設計書 §4.1。回数は T5 で決めた)
     registerLimiter: new RateLimiter({ limit: 10, windowMs: 15 * 60 * 1000 }),
     // ログインは、同じ接続元とユーザー名の組で 15 分に 5 回、同じ接続元全体で 15 分に 30 回まで(FR-005 と同じ基準)
@@ -96,6 +119,7 @@ export function buildApp({
     db,
     config,
     storage,
+    realtime,
     // 旧アバターの実体の削除を、すぐに試す。失敗しても、キューに残り、定期処理で再試行される
     onAvatarReplaced: () => {
       processStorageDeletions(db, storage, {
@@ -104,11 +128,12 @@ export function buildApp({
     },
   });
 
-  registerWorkspaceRoutes(app, { db });
-  registerChannelRoutes(app, { db });
-  registerMessageRoutes(app, { db });
+  registerWorkspaceRoutes(app, { db, realtime });
+  registerChannelRoutes(app, { db, realtime });
+  registerMessageRoutes(app, { db, realtime });
   registerInvitationRoutes(app, {
     db,
+    realtime,
     // 無効なトークンの試行だけを数える。ユーザー単位で 15 分に 10 回、接続元の全体で 15 分に 30 回まで(設計書 §4.1)
     failureUserLimiter: new RateLimiter({ limit: 10, windowMs: 15 * 60 * 1000 }),
     failureIpLimiter: new RateLimiter({ limit: 30, windowMs: 15 * 60 * 1000 }),

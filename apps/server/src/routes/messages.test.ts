@@ -471,3 +471,57 @@ describe('GET /api/channels/:ch/messages(FR-101)', () => {
     expect((await post(app, member, ch, 'x')).statusCode).toBe(404);
   });
 });
+
+describe('採番の順とコミットの順の一致(設計書 §1.1。チャンネル単位の advisory lock)', () => {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it('同じチャンネルのロックが保持されている間、投稿は待たされる。別のチャンネルは待たされない', async () => {
+    const app = makeApp();
+    const owner = await createUser(app);
+    const ws = await newWorkspace(app, owner);
+    const locked = await createChannel(app, owner, ws, 'locked');
+    const free = await createChannel(app, owner, ws, 'free');
+
+    // 別の接続で、同じキーの advisory lock を保持する
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let acquired!: () => void;
+    const gotLock = new Promise<void>((resolve) => (acquired = resolve));
+    const holder = testDb.client.begin(async (sql) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${locked}::text, 0))`;
+      acquired();
+      await held;
+    });
+    await gotLock;
+
+    let done = false;
+    const posting = post(app, owner, locked, 'blocked').then((res) => {
+      done = true;
+      return res;
+    });
+    const other = await post(app, owner, free, 'not blocked'); // 別のチャンネルは、すぐに終わる
+    expect(other.statusCode).toBe(201);
+    await sleep(300);
+    expect(done).toBe(false); // ロックの解放を、待っている
+
+    release();
+    await holder;
+    const res = await posting;
+    expect(res.statusCode).toBe(201);
+    expect(done).toBe(true);
+  });
+
+  it('同じチャンネルへの同時投稿は、ID の順に、1 件ずつ確定する(ID の欠落・重複なし)', async () => {
+    const app = makeApp();
+    const owner = await createUser(app);
+    const ws = await newWorkspace(app, owner);
+    const ch = await createChannel(app, owner, ws, 'serial');
+    const results = await Promise.all(
+      Array.from({ length: 30 }, (_, i) => post(app, owner, ch, `n${i}`)),
+    );
+    expect(results.every((r) => r.statusCode === 201)).toBe(true);
+    const page = (await list(app, owner, ch)).json();
+    expect(page.messages).toHaveLength(30);
+    expect(new Set(page.messages.map((m: { id: number }) => m.id)).size).toBe(30);
+  });
+});

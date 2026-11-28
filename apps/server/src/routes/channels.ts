@@ -16,9 +16,11 @@ import { isUniqueViolation } from '../db/errors';
 import { channelMembers, channels, memberships, users } from '../db/schema';
 import { AppError, parseWith } from '../errors';
 import { avatarUrlFor } from '../profile/avatar';
+import { chRoom, userRoom, wsRoom, type Realtime } from '../realtime/realtime';
 
 export interface ChannelRouteDeps {
   db: Db;
+  realtime: Realtime;
 }
 
 const notFound = () => new AppError(404, 'not_found', '見つかりません。');
@@ -42,6 +44,27 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
+/** 参加した人の情報(channel:member-joined のペイロード) */
+async function loadChannelMember(db: Db, userId: string): Promise<ChannelMemberResponse> {
+  const [u] = await db
+    .select({
+      id: users.id,
+      username: users.username,
+      displayName: users.displayName,
+      statusText: users.statusText,
+      avatarKey: users.avatarKey,
+    })
+    .from(users)
+    .where(eq(users.id, userId));
+  return {
+    id: u!.id,
+    username: u!.username,
+    displayName: u!.displayName,
+    statusText: u!.statusText,
+    avatarUrl: avatarUrlFor(u!.id, u!.avatarKey),
+  };
+}
+
 const listQuerySchema = z.object({
   // joinable=1: 未参加のパブリックチャンネルの一覧(FR-203)
   joinable: z.enum(['1', 'true']).optional(),
@@ -53,7 +76,21 @@ const membersQuerySchema = z.object({
 });
 
 export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDeps): void {
-  const { db } = deps;
+  const { db, realtime } = deps;
+
+  /** チャンネルに加わった人の全ソケットを、ch ルームに参加させ(先に更新)、本人と参加者に知らせる(設計書 §6.3) */
+  async function announceJoined(
+    channelId: string,
+    userId: string,
+    channel: ChannelResponse,
+  ): Promise<void> {
+    realtime.joinUser(userId, [chRoom(channelId)]);
+    realtime.emit(userRoom(userId), 'channel:added', channel);
+    realtime.emit(chRoom(channelId), 'channel:member-joined', {
+      channelId,
+      user: await loadChannelMember(db, userId),
+    });
+  }
 
   // FR-202: 作成。作成者は参加者になる。名前は、同一ワークスペース内で一意(大文字小文字を区別しない)
   app.post<{ Params: { ws: string } }>(
@@ -72,7 +109,16 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
           await tx.insert(channelMembers).values({ channelId: row!.id, userId });
           return row!;
         });
-        return reply.status(201).send(toChannelResponse(created));
+        const body = toChannelResponse(created);
+        // 作成者の全ソケットを、ch ルームに参加させてから(先に更新)、通知する(設計書 §6.3)。
+        // パブリックは ws ルームへ、プライベートは作成者の user ルームへ
+        realtime.joinUser(userId, [chRoom(created.id)]);
+        realtime.emit(
+          type === 'public' ? wsRoom(workspaceId) : userRoom(userId),
+          'channel:created',
+          body,
+        );
+        return reply.status(201).send(body);
       } catch (error) {
         if (isUniqueViolation(error)) {
           throw new AppError(
@@ -170,11 +216,17 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       }
 
       // (3) 参加する(参加済みなら、何もせず成功)
-      await db
+      const inserted = await db
         .insert(channelMembers)
         .values({ channelId: row.channel.id, userId })
-        .onConflictDoNothing();
-      return toChannelResponse(row.channel);
+        .onConflictDoNothing()
+        .returning({ userId: channelMembers.userId });
+      const body = toChannelResponse(row.channel);
+      // 新しく参加したときだけ、ルームを更新して(先に更新)、通知する(設計書 §6.3)
+      if (inserted.length > 0) {
+        await announceJoined(row.channel.id, userId, body);
+      }
+      return body;
     },
   );
 
@@ -195,6 +247,11 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
             eq(channelMembers.userId, authOf(request).user.id),
           ),
         );
+      // ルームから外してから(先に更新)、通知する。外した後なので、member-left は、本人には届かない
+      const userId = authOf(request).user.id;
+      realtime.leaveUser(userId, [chRoom(channel.id)]);
+      realtime.emit(userRoom(userId), 'channel:left', { channelId: channel.id });
+      realtime.emit(chRoom(channel.id), 'channel:member-left', { channelId: channel.id, userId });
       return reply.status(204).send();
     },
   );
@@ -307,10 +364,14 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
         );
       }
       // (9) 招待する(すでに参加していれば、成功)
-      await db
+      const inserted = await db
         .insert(channelMembers)
         .values({ channelId: channel.id, userId: targetId })
-        .onConflictDoNothing();
+        .onConflictDoNothing()
+        .returning({ userId: channelMembers.userId });
+      if (inserted.length > 0) {
+        await announceJoined(channel.id, targetId, toChannelResponse(channel));
+      }
       return reply.status(204).send();
     },
   );

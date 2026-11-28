@@ -9,6 +9,8 @@ import type { Db } from '../db/client';
 import { users } from '../db/schema';
 import { AppError, parseWith } from '../errors';
 import { avatarVersion, replaceAvatar } from '../profile/avatar';
+import { notifyUserUpdated } from '../realtime/notify';
+import type { Realtime } from '../realtime/realtime';
 import { sharesActiveWorkspace } from '../workspaces/membership';
 import { detectImageType, mimeFromExt } from '../storage/image-type';
 import type { Storage } from '../storage/storage';
@@ -21,6 +23,7 @@ export interface ProfileRouteDeps {
   db: Db;
   config: Config;
   storage: Storage;
+  realtime: Realtime;
   /** アバターの差し替え後に、旧ファイルの削除を促す(失敗しても、キューに残るので、再試行される) */
   onAvatarReplaced?: () => void;
 }
@@ -74,6 +77,7 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileRouteDe
       .set(update)
       .where(eq(users.id, authOf(request).user.id))
       .returning();
+    await notifyUserUpdated(db, deps.realtime, updated!);
     return toMe(updated!);
   });
 
@@ -97,6 +101,7 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileRouteDe
       const user = authOf(request).user;
       const { avatarKey } = await replaceAvatar({ db, storage, userId: user.id, data, type });
       deps.onAvatarReplaced?.();
+      await notifyUserUpdated(db, deps.realtime, { ...user, avatarKey });
       return toMe({ ...user, avatarKey });
     },
   );

@@ -38,6 +38,7 @@ export type {
   MessageResponse,
   PostMessageRequest,
 } from './message';
+export type { ClientToServerEvents, ServerToClientEvents, UserUpdatedPayload } from './events';
 export { createInvitationSchema } from './invitation';
 export type {
   CreateInvitationRequest,

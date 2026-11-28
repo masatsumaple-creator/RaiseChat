@@ -12,12 +12,14 @@ import { avatarUrlFor } from '../profile/avatar';
 import { generateRecoveryCode, normalizeRecoveryCode } from '../auth/tokens';
 import { isUniqueViolation } from '../db/errors';
 import { AppError, parseWith } from '../errors';
+import type { Realtime } from '../realtime/realtime';
 import { rateLimitedError, rateLimitGuard, type RateLimiter } from '../rate-limit';
 import { SESSION_COOKIE_NAME, sessionCookieOptions } from '../session-cookie';
 
 export interface AuthRouteDeps {
   db: Db;
   config: Config;
+  realtime: Realtime;
   /** 登録の試行を、接続元ごとに制限する(設計書 §4.1) */
   registerLimiter: RateLimiter;
   /** ログインの試行を、接続元とユーザー名の組ごとに制限する(設計書 §4.1)。成功すると、組の記憶を消す */
@@ -125,6 +127,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
   // FR-003: ログアウト。現在のセッションだけを削除する(他の端末のセッションは、そのまま)
   app.post('/api/auth/logout', { preHandler: requireUser(db) }, async (request, reply) => {
     await db.delete(sessions).where(eq(sessions.tokenHash, authOf(request).tokenHash));
+    // そのセッションのソケットだけを切断する(他の端末のセッションの接続は、そのまま)
+    deps.realtime.disconnectSession(authOf(request).tokenHash);
     void reply.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
     return reply.status(204).send();
   });
