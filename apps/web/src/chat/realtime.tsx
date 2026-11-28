@@ -8,6 +8,7 @@ import { membersKey, WORKSPACES_KEY } from '../api/workspaces';
 import {
   addMessage,
   applyMessageDeleted,
+  applyReaction,
   keepFirstPage,
   replaceMessage,
   setReplyCount,
@@ -69,6 +70,14 @@ export function applyServerEvents(socket: Socket<ServerToClientEvents>, queryCli
       setReplyCount(data, parentId, replyCount),
     );
   });
+  // 差分ではなく、その絵文字の、いまの状態が届く(冪等)
+  for (const event of ['reaction:added', 'reaction:removed'] as const) {
+    socket.on(event, (payload) => {
+      queryClient.setQueryData<MessagesData>(messagesKey(payload.channelId), (data) =>
+        applyReaction(data, payload),
+      );
+    });
+  }
   socket.on('workspace:added', () => {
     void queryClient.invalidateQueries({ queryKey: WORKSPACES_KEY });
   });

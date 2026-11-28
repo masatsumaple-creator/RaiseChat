@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ReactionSummary } from './emoji';
 import { codePointLength } from './text';
 
 /** メッセージ本文の上限(設計書 §2。DB の CHECK と同じ。コードポイント数) */
@@ -63,6 +64,8 @@ export interface MessageResponse {
   editedAt: string | null;
   /** スレッドの返信数(削除済みの返信は数えない)。返信自身は 0 */
   replyCount: number;
+  /** 絵文字ごとのリアクション(付けた順。FR-108) */
+  reactions: ReactionSummary[];
   deleted: false;
 }
 

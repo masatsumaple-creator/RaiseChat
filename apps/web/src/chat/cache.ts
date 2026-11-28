@@ -1,5 +1,6 @@
 import type {
   DeletedMessageResponse,
+  ReactionEventPayload,
   MessageListItem,
   MessagePageResponse,
   MessageResponse,
@@ -99,6 +100,29 @@ export function setReplyCount(
     if (item.id !== parentId) return item;
     if (item.deleted && replyCount <= 0) return null;
     return item.replyCount === replyCount ? item : { ...item, replyCount };
+  });
+}
+
+/**
+ * リアクションの付与・解除(reaction:added / reaction:removed)を反映する。
+ * その絵文字の、いまの状態(件数と付けた人)で置き換える(差分ではないので、重ねて届いても、順序が前後しても、同じ結果になる)。
+ * 件数が 0 なら外す。すでにある絵文字は、位置を変えず、新しい絵文字は、末尾に加える。
+ */
+export function applyReaction(
+  data: MessagesData | undefined,
+  payload: ReactionEventPayload,
+): MessagesData | undefined {
+  if (!data) return data;
+  return mapItems(data, (item) => {
+    if (item.id !== payload.messageId || item.deleted) return item;
+    const state = { emoji: payload.emoji, count: payload.count, userIds: payload.userIds };
+    const index = item.reactions.findIndex((r) => r.emoji === payload.emoji);
+    if (payload.count <= 0) {
+      if (index < 0) return item;
+      return { ...item, reactions: item.reactions.filter((r) => r.emoji !== payload.emoji) };
+    }
+    if (index < 0) return { ...item, reactions: [...item.reactions, state] };
+    return { ...item, reactions: item.reactions.map((r, i) => (i === index ? state : r)) };
   });
 }
 

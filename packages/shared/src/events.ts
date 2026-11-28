@@ -1,4 +1,5 @@
 import type { ChannelMemberResponse, ChannelResponse } from './channel';
+import type { ReactionSummary } from './emoji';
 import type { MessageResponse } from './message';
 import type { MemberResponse, WorkspaceResponse } from './workspace';
 
@@ -9,6 +10,12 @@ export interface UserUpdatedPayload {
   displayName: string;
   statusText: string;
   avatarUrl: string | null;
+}
+
+/** reaction:added / reaction:removed のペイロード */
+export interface ReactionEventPayload extends ReactionSummary {
+  messageId: number;
+  channelId: string;
 }
 
 /**
@@ -23,6 +30,12 @@ export interface ServerToClientEvents {
   'message:deleted': (payload: { id: number; channelId: string; replyCount: number }) => void;
   /** スレッドの返信の投稿。親の返信数(この返信を含む)つき。トップレベルの message:created は送らない */
   'thread:reply-created': (payload: { reply: MessageResponse; replyCount: number }) => void;
+  /**
+   * リアクションの付与・解除(トップレベルも、返信も)。その絵文字の、いまの状態(件数と付けた人)を送る。
+   * 件数が 0 なら、その絵文字は、メッセージから外す(冪等に適用できるよう、差分ではなく、状態を送る。設計書 §6.5)
+   */
+  'reaction:added': (payload: ReactionEventPayload) => void;
+  'reaction:removed': (payload: ReactionEventPayload) => void;
   /** スレッドの返信の編集(返信の編集・削除では、message:* は送らない。設計書 §10 の T17) */
   'thread:reply-updated': (message: MessageResponse) => void;
   /** スレッドの返信の削除(本文は含まない)。親の返信数つき */
