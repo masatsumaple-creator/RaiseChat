@@ -25,6 +25,15 @@ export type {
   ChannelType,
   CreateChannelRequest,
 } from './channel';
+export { createInvitationSchema } from './invitation';
+export type {
+  CreateInvitationRequest,
+  InvitationAcceptResponse,
+  InvitationCreatedResponse,
+  InvitationPreviewResponse,
+  InvitationResponse,
+  InvitationStatus,
+} from './invitation';
 export { WORKSPACE_NAME_MAX_LENGTH, createWorkspaceSchema } from './workspace';
 export type {
   CreateWorkspaceRequest,
