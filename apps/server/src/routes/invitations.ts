@@ -14,12 +14,22 @@ import { authOf, requireUser } from '../auth/guards';
 import { generateSessionToken, hashToken } from '../auth/tokens';
 import { requireOwner, workspaceOf } from '../auth/workspace-guards';
 import type { Db } from '../db/client';
-import { channelMembers, channels, invitations, memberships, workspaces } from '../db/schema';
+import {
+  channelMembers,
+  channels,
+  invitations,
+  memberships,
+  users,
+  workspaces,
+} from '../db/schema';
 import { AppError, parseWith } from '../errors';
+import { avatarUrlFor } from '../profile/avatar';
 import { rateLimitedError, type RateLimiter } from '../rate-limit';
+import { chRoom, userRoom, wsRoom, type Realtime } from '../realtime/realtime';
 
 export interface InvitationRouteDeps {
   db: Db;
+  realtime: Realtime;
   /** 無効なトークンの試行を、ユーザー単位で数える(設計書 §4.1: 15 分に 10 回) */
   failureUserLimiter: RateLimiter;
   /** 無効なトークンの試行を、接続元の全体で数える(設計書 §4.1: 15 分に 30 回) */
@@ -39,6 +49,13 @@ const idSchema = z.uuid();
  */
 const invalidInvitation = () =>
   new AppError(404, 'invalid_invitation', 'この招待リンクは、無効です。');
+
+/** 受諾の結果。joined は、新しく参加したか(参加済みの再受諾は false) */
+interface AcceptResult {
+  workspace: InvitationAcceptResponse;
+  joined: boolean;
+  generalId: string | null;
+}
 
 /** トランザクション内で無効と分かったときの、ロールバック用の例外 */
 class InvalidInvitationError extends Error {}
@@ -66,7 +83,7 @@ function toInvitationResponse(row: InvitationRow, now = new Date()): InvitationR
 }
 
 export function registerInvitationRoutes(app: FastifyInstance, deps: InvitationRouteDeps): void {
-  const { db, failureUserLimiter, failureIpLimiter } = deps;
+  const { db, realtime, failureUserLimiter, failureIpLimiter } = deps;
 
   const limitKeys = (request: FastifyRequest) => ({
     user: `invite-user:${authOf(request).user.id}`,
@@ -199,8 +216,9 @@ export function registerInvitationRoutes(app: FastifyInstance, deps: InvitationR
       if (!TOKEN_PATTERN.test(token)) throw failed(request);
       const userId = authOf(request).user.id;
 
+      let result: AcceptResult;
       try {
-        return await db.transaction(async (tx): Promise<InvitationAcceptResponse> => {
+        result = await db.transaction(async (tx): Promise<AcceptResult> => {
           // 1. 存在と有効(取り消されていない、期限内)を確認して、workspace_id を得る
           const [invitation] = await tx
             .select({
@@ -246,9 +264,13 @@ export function registerInvitationRoutes(app: FastifyInstance, deps: InvitationR
             if (!existing || existing.status !== 'active') throw new InvalidInvitationError();
             // active なら、何もせず成功(使用回数は、増やさない)
             return {
-              id: invitation.workspaceId,
-              name: invitation.workspaceName,
-              role: existing.role as WorkspaceRole,
+              workspace: {
+                id: invitation.workspaceId,
+                name: invitation.workspaceName,
+                role: existing.role as WorkspaceRole,
+              },
+              joined: false,
+              generalId: null,
             };
           }
 
@@ -281,12 +303,50 @@ export function registerInvitationRoutes(app: FastifyInstance, deps: InvitationR
               .onConflictDoNothing();
           }
 
-          return { id: invitation.workspaceId, name: invitation.workspaceName, role: 'member' };
+          return {
+            workspace: {
+              id: invitation.workspaceId,
+              name: invitation.workspaceName,
+              role: 'member',
+            },
+            joined: true,
+            generalId: general?.id ?? null,
+          };
         });
       } catch (error) {
         if (error instanceof InvalidInvitationError) throw failed(request);
         throw error;
       }
+
+      // 新しく参加したときだけ(参加済みの再受諾では、何もしない)、コミットの後に、ルームを更新して(先に更新)、通知する(設計書 §6.3)
+      if (result.joined) {
+        const rooms = [wsRoom(result.workspace.id)];
+        if (result.generalId) rooms.push(chRoom(result.generalId));
+        realtime.joinUser(userId, rooms);
+        realtime.emit(userRoom(userId), 'workspace:added', result.workspace);
+        const [member] = await db
+          .select({
+            id: users.id,
+            username: users.username,
+            displayName: users.displayName,
+            statusText: users.statusText,
+            avatarKey: users.avatarKey,
+          })
+          .from(users)
+          .where(eq(users.id, userId));
+        realtime.emit(wsRoom(result.workspace.id), 'member:joined', {
+          workspaceId: result.workspace.id,
+          member: {
+            id: member!.id,
+            username: member!.username,
+            displayName: member!.displayName,
+            statusText: member!.statusText,
+            avatarUrl: avatarUrlFor(member!.id, member!.avatarKey),
+            role: 'member',
+          },
+        });
+      }
+      return result.workspace;
     },
   );
 }

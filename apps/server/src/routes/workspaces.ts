@@ -12,16 +12,18 @@ import type { Db } from '../db/client';
 import { channelMembers, channels, memberships, users, workspaces } from '../db/schema';
 import { parseWith } from '../errors';
 import { avatarUrlFor } from '../profile/avatar';
+import { chRoom, userRoom, wsRoom, type Realtime } from '../realtime/realtime';
 
 /** 既定チャンネルの名前(FR-201) */
 export const DEFAULT_CHANNEL_NAME = 'general';
 
 export interface WorkspaceRouteDeps {
   db: Db;
+  realtime: Realtime;
 }
 
 export function registerWorkspaceRoutes(app: FastifyInstance, deps: WorkspaceRouteDeps): void {
-  const { db } = deps;
+  const { db, realtime } = deps;
 
   // FR-206: 自分が active に所属しているワークスペースの一覧(古い順)
   app.get(
@@ -69,10 +71,19 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: WorkspaceRou
           })
           .returning({ id: channels.id });
         await tx.insert(channelMembers).values({ channelId: general!.id, userId });
-        return created!;
+        return { workspace: created!, generalId: general!.id };
       });
 
-      return reply.status(201).send({ id: workspace.id, name: workspace.name, role: 'owner' });
+      const body: WorkspaceResponse = {
+        id: workspace.workspace.id,
+        name: workspace.workspace.name,
+        role: 'owner',
+      };
+      // コミットの後に、作成者の全ソケットを、ws ルームと general の ch ルームに参加させ(先に更新)、
+      // 別のタブの表示のために、workspace:added を送る(設計書 §6.3)
+      realtime.joinUser(userId, [wsRoom(body.id), chRoom(workspace.generalId)]);
+      realtime.emit(userRoom(userId), 'workspace:added', body);
+      return reply.status(201).send(body);
     },
   );
 
