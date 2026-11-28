@@ -1,7 +1,7 @@
 import type { ChannelResponse } from '@raisechat/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   addChannelMember,
   channelMembersKey,
@@ -96,7 +96,19 @@ export function ChannelPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   // 開いているスレッドの親(チャンネルを移ると、閉じる)
-  const [thread, setThread] = useState<{ channelId: string; rootId: number } | null>(null);
+  // 検索結果の返信から開いたときは、?thread=親の ID で、パネルを開いた状態にする(FR-110)
+  const [searchParams] = useSearchParams();
+  const threadParam = Number(searchParams.get('thread'));
+  const threadFromUrl =
+    chId !== undefined && Number.isSafeInteger(threadParam) && threadParam > 0
+      ? { channelId: chId, rootId: threadParam }
+      : null;
+  const [thread, setThread] = useState<{ channelId: string; rootId: number } | null>(threadFromUrl);
+  useEffect(() => {
+    if (chId !== undefined && Number.isSafeInteger(threadParam) && threadParam > 0) {
+      setThread({ channelId: chId, rootId: threadParam });
+    }
+  }, [chId, threadParam]);
 
   const channels = useQuery({
     queryKey: channelsKey(workspace.id),
