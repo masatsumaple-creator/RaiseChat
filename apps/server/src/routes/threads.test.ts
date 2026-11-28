@@ -179,6 +179,7 @@ describe('POST /api/messages/:id/replies(FR-105)', () => {
       replyCount: 0,
       reactions: [],
       mentions: [],
+      attachments: [],
       deleted: false,
     });
     expect(await row(res.json().id)).toMatchObject({ parentId: parent.id, channelId: ch });

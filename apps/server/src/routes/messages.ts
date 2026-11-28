@@ -2,6 +2,7 @@ import {
   MESSAGE_PAGE_SIZE,
   messageListQuerySchema,
   postMessageSchema,
+  type AttachmentResponse,
   type DeletedMessageResponse,
   type MessageListItem,
   type MessagePageResponse,
@@ -15,16 +16,28 @@ import { channelOf, requireChannel } from '../auth/channel-guards';
 import { authOf } from '../auth/guards';
 import { messageOf, requireAuthor } from '../auth/message-guards';
 import type { Db } from '../db/client';
-import { messages, mentions, reactions, users } from '../db/schema';
+import { attachments, messages, mentions, reactions, users } from '../db/schema';
 import { AppError, parseWith } from '../errors';
+import {
+  attachmentsOf,
+  discardStored,
+  loadAttachments,
+  readMessageUpload,
+  storeFiles,
+  type ValidatedFile,
+} from '../messages/attachments';
 import { loadMentions, mentionsOf, notifyMentions, syncMentions } from '../messages/mentions';
 import { loadReactions, reactionsOf } from '../messages/reactions';
 import { avatarUrlFor } from '../profile/avatar';
 import { chRoom, type Realtime } from '../realtime/realtime';
+import type { Storage } from '../storage/storage';
 
 export interface MessageRouteDeps {
   db: Db;
   realtime: Realtime;
+  storage: Storage;
+  /** 削除キューに積んだ(添付の削除・投稿の失敗)あとに、実体の削除を、すぐに試す。失敗しても、キューに残る */
+  onStorageDeletionQueued?: () => void;
 }
 
 interface AuthorRow {
@@ -50,6 +63,7 @@ export function toMessageResponse(
   replyCount: number,
   reactions: ReactionSummary[],
   mentions: MentionResponse[],
+  attachments: AttachmentResponse[] = [],
 ): MessageResponse {
   return {
     id: row.id,
@@ -67,6 +81,7 @@ export function toMessageResponse(
     replyCount,
     reactions,
     mentions,
+    attachments,
     deleted: false,
   };
 }
@@ -90,34 +105,83 @@ export async function countReplies(db: Db, parentId: number): Promise<number> {
 }
 
 export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDeps): void {
-  const { db, realtime } = deps;
+  const { db, realtime, storage, onStorageDeletionQueued } = deps;
 
   // FR-101: 投稿(参加者のみ。参加者でなければ、存在を隠して 404)
   app.post<{ Params: { ch: string } }>(
     '/api/channels/:ch/messages',
     { preHandler: requireChannel(db) },
     async (request, reply): Promise<MessageResponse> => {
-      const { body } = parseWith(postMessageSchema, request.body);
-      const channelId = channelOf(request).id;
+      // 本文のみは JSON、添付つきは multipart(body と files。FR-107)。
+      // 検証は、すべて、保存の前に行う(どれかが不正なら、投稿全体を拒否して、何も残さない)
+      let files: ValidatedFile[] = [];
+      let body: string;
+      if (request.isMultipart()) {
+        const upload = await readMessageUpload(request);
+        files = upload.files;
+        body = parseWith(postMessageSchema, { body: upload.body }).body;
+      } else {
+        body = parseWith(postMessageSchema, request.body).body;
+      }
+      const channel = channelOf(request);
+      const channelId = channel.id;
       const me = authOf(request).user;
-      // チャンネル単位の advisory lock を取ってから挿入する。同じチャンネル内で、採番(ID)の順と、
-      // コミットの順を一致させるため(設計書 §1.1。既読位置・ページングで、取りこぼしが起きないように)。
-      // ロックは、トランザクションの終了(コミット)で、解放される
-      const row = await db.transaction(async (tx) => {
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(${channelLockKey(channelId)})`);
-        const [inserted] = await tx
-          .insert(messages)
-          .values({ channelId, userId: me.id, body })
-          .returning();
-        const synced = await syncMentions(tx, {
-          id: inserted!.id,
-          channelId,
-          authorId: me.id,
-          body,
+      // 実体を保存してから、DB に書く。DB への書き込みが失敗したら、実体は、削除キューに積む
+      const stored = await storeFiles(db, storage, channel.workspaceId, files);
+      let row;
+      try {
+        // チャンネル単位の advisory lock を取ってから挿入する。同じチャンネル内で、採番(ID)の順と、
+        // コミットの順を一致させるため(設計書 §1.1。既読位置・ページングで、取りこぼしが起きないように)。
+        // ロックは、トランザクションの終了(コミット)で、解放される
+        row = await db.transaction(async (tx) => {
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(${channelLockKey(channelId)})`);
+          const [inserted] = await tx
+            .insert(messages)
+            .values({ channelId, userId: me.id, body })
+            .returning();
+          const synced = await syncMentions(tx, {
+            id: inserted!.id,
+            channelId,
+            authorId: me.id,
+            body,
+          });
+          const baseTime = Date.now();
+          if (stored.length > 0) {
+            await tx.insert(attachments).values(
+              stored.map((s, i) => ({
+                id: s.id,
+                messageId: inserted!.id,
+                kind: s.file.type.kind,
+                storageKey: s.key,
+                mime: s.file.type.mime,
+                sizeBytes: s.file.data.length,
+                originalName: s.file.name,
+                // 付けた順に並べるため、1 ミリ秒ずつずらす
+                createdAt: new Date(baseTime + i),
+              })),
+            );
+          }
+          return { inserted: inserted!, synced };
         });
-        return { inserted: inserted!, synced };
-      });
-      const response = toMessageResponse({ ...row.inserted, body }, me, 0, [], row.synced.mentions);
+      } catch (error) {
+        await discardStored(db, stored);
+        onStorageDeletionQueued?.();
+        throw error;
+      }
+      const response = toMessageResponse(
+        { ...row.inserted, body },
+        me,
+        0,
+        [],
+        row.synced.mentions,
+        stored.map((s) => ({
+          id: s.id,
+          kind: s.file.type.kind,
+          mime: s.file.type.mime,
+          sizeBytes: s.file.data.length,
+          name: s.file.name,
+        })),
+      );
       // コミットの後に、チャンネルの参加者へ通知する(設計書 §6.4)
       realtime.emit(chRoom(channelId), 'message:created', response);
       notifyMentions(realtime, row.synced, response);
@@ -174,6 +238,10 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
         db,
         page.filter((r) => r.deletedAt === null).map((r) => r.id),
       );
+      const attachmentsById = await loadAttachments(
+        db,
+        page.filter((r) => r.deletedAt === null).map((r) => r.id),
+      );
       const items: MessageListItem[] = page.map((r) => {
         if (r.deletedAt !== null || r.body === null) {
           const deleted: DeletedMessageResponse = {
@@ -191,6 +259,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
           r.replyCount,
           reactionsById.get(r.id) ?? [],
           mentionsById.get(r.id) ?? [],
+          attachmentsById.get(r.id) ?? [],
         );
       });
       return { messages: items, nextCursor: hasMore ? page[page.length - 1]!.id : null };
@@ -219,6 +288,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
           await countReplies(db, current.id),
           await reactionsOf(db, current.id),
           await mentionsOf(db, current.id),
+          await attachmentsOf(db, current.id),
         );
       }
 
@@ -248,6 +318,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
         await countReplies(db, updated.id),
         await reactionsOf(db, updated.id),
         synced.mentions,
+        await attachmentsOf(db, updated.id),
       );
       // トップレベルは message:updated、返信は thread:reply-updated(どちらか一方だけ送る。設計書 §10 の T17)
       if (response.parentId === null) {
@@ -277,9 +348,12 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
         if (!row) return false;
         await tx.delete(reactions).where(eq(reactions.messageId, current.id));
         await tx.delete(mentions).where(eq(mentions.messageId, current.id));
+        // 添付は、行を物理削除する(取得は、即時に 404 になる)。トリガが、実体の削除を、キューに積む
+        await tx.delete(attachments).where(eq(attachments.messageId, current.id));
         return true;
       });
       if (!deleted) throw new AppError(404, 'not_found', '見つかりません。');
+      onStorageDeletionQueued?.();
 
       // 通知には、本文を含めない。トップレベルは message:deleted(自分の返信数)、
       // 返信は thread:reply-deleted(親の返信数)。どちらか一方だけ送る

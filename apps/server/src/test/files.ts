@@ -12,6 +12,18 @@ export const WEBP_HEADER = Buffer.concat([
   Buffer.from('WEBPVP8 ', 'ascii'),
 ]);
 
+/** MP4: サイズ(4 バイト)+ ftyp + major brand(isom)+ minor version */
+export const MP4_HEADER = Buffer.concat([
+  Buffer.from([0x00, 0x00, 0x00, 0x18]),
+  Buffer.from('ftypisom', 'ascii'),
+  Buffer.from([0x00, 0x00, 0x02, 0x00]),
+]);
+/** WebM: EBML のヘッダ(DocType = webm) */
+export const WEBM_HEADER = Buffer.concat([
+  Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x82, 0x84]),
+  Buffer.from('webm', 'ascii'),
+]);
+
 /** 先頭に header を置き、ちょうど size バイトにしたファイルを作る */
 export function fileOfSize(header: Buffer, size: number): Buffer {
   const out = Buffer.alloc(size, 0x41);

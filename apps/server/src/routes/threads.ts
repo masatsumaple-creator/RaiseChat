@@ -13,6 +13,7 @@ import { requireMessageChannel, targetMessageOf } from '../auth/message-guards';
 import type { Db } from '../db/client';
 import { messages, threadMembers, users } from '../db/schema';
 import { AppError, parseWith } from '../errors';
+import { attachmentsOf } from '../messages/attachments';
 import { loadMentions, notifyMentions, syncMentions } from '../messages/mentions';
 import { loadReactions } from '../messages/reactions';
 import { chRoom, type Realtime } from '../realtime/realtime';
@@ -182,6 +183,7 @@ export function registerThreadRoutes(app: FastifyInstance, deps: ThreadRouteDeps
           replyCount,
           reactionsById.get(target.id) ?? [],
           mentionsById.get(target.id) ?? [],
+          await attachmentsOf(db, target.id),
         );
       }
 

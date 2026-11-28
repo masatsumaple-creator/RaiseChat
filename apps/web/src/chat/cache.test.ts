@@ -24,6 +24,7 @@ function msg(id: number, authorId = 'u1', body = `m${id}`): MessageResponse {
     replyCount: 0,
     reactions: [],
     mentions: [],
+    attachments: [],
     deleted: false,
   };
 }

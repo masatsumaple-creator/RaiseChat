@@ -304,3 +304,28 @@ export const mentions = pgTable(
       .where(sql`${t.readAt} IS NULL`),
   ],
 );
+
+/**
+ * 添付(FR-107)。画像・動画。実体は、ストレージにあり(storage_key)、行が消えると(メッセージの削除・チャンネル削除の連鎖を含む)、
+ * DB のトリガが、実体の削除を、削除キュー(storage_deletions)に積む(マイグレーションに、トリガを書く)。
+ */
+export const attachments = pgTable(
+  'attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    messageId: bigint('message_id', { mode: 'number' })
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    storageKey: text('storage_key').notNull(),
+    mime: text('mime').notNull(),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+    originalName: text('original_name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('attachments_kind_check', sql`${t.kind} IN ('image', 'video')`),
+    check('attachments_size_check', sql`${t.sizeBytes} > 0`),
+    index('attachments_message_id_idx').on(t.messageId),
+  ],
+);
