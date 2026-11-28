@@ -1,10 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { errorMessage } from '../api/client';
 import { listMembers, membersKey } from '../api/workspaces';
 import { useCurrentWorkspace } from './WorkspaceShell';
 
-/** ワークスペースの最初の画面: メンバー一覧(チャンネルは、T16 で足す) */
+/** メンバー一覧 */
 export function WorkspaceHome() {
   const workspace = useCurrentWorkspace();
   const members = useQuery({
@@ -15,11 +14,6 @@ export function WorkspaceHome() {
 
   return (
     <main>
-      {workspace.role === 'owner' && (
-        <p>
-          <Link to="invitations">招待リンクの管理</Link>
-        </p>
-      )}
       <h2>メンバー</h2>
       {members.isPending && <p role="status">読み込み中…</p>}
       {members.isError && <p role="alert">{errorMessage(members.error)}</p>}

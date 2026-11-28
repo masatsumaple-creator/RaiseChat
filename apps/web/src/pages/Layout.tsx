@@ -3,8 +3,20 @@ import { Link, Outlet } from 'react-router-dom';
 import { logout } from '../api/auth';
 import { errorMessage } from '../api/client';
 import { ME_QUERY_KEY, useMe } from '../api/me';
+import { RealtimeProvider, useConnectionStatus } from '../chat/realtime';
 
-/** ログイン済みの画面の共通部分(ヘッダー: ホームへ・プロフィール・ログアウト) */
+/** WebSocket が切れている間だけ、画面で知らせる(自動で再接続する) */
+function ConnectionBanner() {
+  const status = useConnectionStatus();
+  if (status !== 'disconnected') return null;
+  return (
+    <p role="status" className="connection-banner">
+      接続が切れました。再接続しています…
+    </p>
+  );
+}
+
+/** ログイン済みの画面の共通部分(ヘッダー: ホームへ・プロフィール・ログアウト)。WebSocket もここでつなぐ */
 export function Layout() {
   const queryClient = useQueryClient();
   const { data: me } = useMe();
@@ -16,7 +28,7 @@ export function Layout() {
   });
 
   return (
-    <>
+    <RealtimeProvider>
       <header>
         <Link to="/">RaiseChat</Link>
         <nav>
@@ -27,7 +39,8 @@ export function Layout() {
         </nav>
         {mutation.isError && <p role="alert">{errorMessage(mutation.error)}</p>}
       </header>
+      <ConnectionBanner />
       <Outlet />
-    </>
+    </RealtimeProvider>
   );
 }

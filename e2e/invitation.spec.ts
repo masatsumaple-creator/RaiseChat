@@ -1,30 +1,5 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
-
-const PASSWORD = 'correct-horse-battery';
-
-/** 新しいブラウザ(Cookie を共有しない別の人)のページを作る */
-async function newPerson(browser: Browser): Promise<Page> {
-  const context = await browser.newContext();
-  return context.newPage();
-}
-
-/** 登録の画面で、登録して、リカバリーコードの確認を済ませる(戻り先があれば、そこへ移る) */
-async function registerFromForm(page: Page, username: string) {
-  await expect(page.getByRole('heading', { name: 'アカウント登録' })).toBeVisible();
-  await page.getByLabel('ユーザー名').fill(username);
-  await page.getByLabel(/^パスワード/).fill(PASSWORD);
-  await page.getByRole('button', { name: '登録' }).click();
-  await expect(
-    page.getByRole('heading', { name: 'リカバリーコードを保存してください' }),
-  ).toBeVisible();
-  await page.getByLabel('リカバリーコードを保存しました').check();
-  await page.getByRole('button', { name: '続ける' }).click();
-}
-
-async function register(page: Page, username: string) {
-  await page.goto('/register');
-  await registerFromForm(page, username);
-}
+import { expect, test } from '@playwright/test';
+import { newPerson, register, registerFromForm } from './helpers';
 
 test('ワークスペースを作り、招待リンクで別の人が(未ログインから登録して)参加し、取り消すと無効になる', async ({
   browser,
@@ -40,7 +15,7 @@ test('ワークスペースを作り、招待リンクで別の人が(未ログ�
   await expect(owner.getByRole('heading', { name: `ようこそ、${ownerName}さん` })).toBeVisible();
   await owner.getByLabel('ワークスペース名').fill('みんなの部屋');
   await owner.getByRole('button', { name: '作成' }).click();
-  await expect(owner).toHaveURL(/\/w\/[0-9a-f-]{36}$/);
+  await expect(owner).toHaveURL(/\/w\/[0-9a-f-]{36}\/c\/[0-9a-f-]{36}$/); // general が開く
   await expect(owner.getByRole('heading', { name: 'みんなの部屋' })).toBeVisible();
   // 切り替えの一覧に、自分のワークスペースが出る
   await expect(
@@ -65,8 +40,9 @@ test('ワークスペースを作り、招待リンクで別の人が(未ログ�
   await registerFromForm(guest, guestName);
   await expect(guest.getByText('「みんなの部屋」に招待されています')).toBeVisible();
   await guest.getByRole('button', { name: '参加する' }).click();
-  await expect(guest).toHaveURL(/\/w\/[0-9a-f-]{36}$/);
+  await expect(guest).toHaveURL(/\/w\/[0-9a-f-]{36}\/c\/[0-9a-f-]{36}$/);
   await expect(guest.getByRole('heading', { name: 'みんなの部屋' })).toBeVisible();
+  await guest.getByRole('link', { name: 'メンバー' }).click();
   const members = guest.getByRole('list', { name: 'メンバー' });
   await expect(members.getByText(`@${ownerName}`)).toBeVisible();
   await expect(members.getByText(`@${guestName}`)).toBeVisible();
