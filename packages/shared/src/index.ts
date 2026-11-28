@@ -16,6 +16,7 @@ export {
   CREATABLE_CHANNEL_TYPES,
   addChannelMemberSchema,
   createChannelSchema,
+  createDmSchema,
 } from './channel';
 export type {
   AddChannelMemberRequest,
@@ -24,6 +25,8 @@ export type {
   ChannelResponse,
   ChannelType,
   CreateChannelRequest,
+  CreateDmRequest,
+  DmPeer,
 } from './channel';
 export {
   MESSAGE_BODY_MAX_LENGTH,
