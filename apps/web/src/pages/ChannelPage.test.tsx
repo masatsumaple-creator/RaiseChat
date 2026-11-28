@@ -21,6 +21,7 @@ function channel(id: string, name: string, extra: Partial<ChannelResponse> = {})
     name,
     isDefault: false,
     createdBy: 'u9',
+    peer: null,
     ...extra,
   };
 }

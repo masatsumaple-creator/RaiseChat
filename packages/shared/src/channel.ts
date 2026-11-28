@@ -28,7 +28,19 @@ export type CreateChannelRequest = z.infer<typeof createChannelSchema>;
 export const addChannelMemberSchema = z.strictObject({ userId: z.uuid() });
 export type AddChannelMemberRequest = z.infer<typeof addChannelMemberSchema>;
 
+/** POST /workspaces/:ws/dms の本文(FR-102)。相手のユーザー ID */
+export const createDmSchema = z.strictObject({ userId: z.uuid() });
+export type CreateDmRequest = z.infer<typeof createDmSchema>;
+
 export type ChannelType = 'public' | 'private' | 'dm';
+
+/** DM の相手(DM のチャンネルの応答に含める) */
+export interface DmPeer {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
 
 export interface ChannelResponse {
   id: string;
@@ -39,6 +51,8 @@ export interface ChannelResponse {
   /** 既定チャンネル(general)。退出・削除できない */
   isDefault: boolean;
   createdBy: string | null;
+  /** DM なら、呼び出した人から見た相手。DM 以外は null */
+  peer: DmPeer | null;
 }
 
 /** オーナーの管理一覧(GET /workspaces/:ws/channels/admin)。内容は見せず、名前だけ */

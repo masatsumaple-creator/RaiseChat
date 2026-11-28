@@ -48,6 +48,8 @@ export interface ServerToClientEvents {
   }) => void;
   /** メンションされた人にだけ届く(user ルーム)。投稿・編集で、新しく加わった人のみ */
   'mention:created': (payload: MentionCreatedPayload) => void;
+  /** DM の作成(2 人の user ルームへ。peer は、受け取る人から見た相手) */
+  'dm:created': (channel: ChannelResponse) => void;
   'workspace:added': (workspace: WorkspaceResponse) => void;
   'member:joined': (payload: { workspaceId: string; member: MemberResponse }) => void;
   'channel:created': (channel: ChannelResponse) => void;

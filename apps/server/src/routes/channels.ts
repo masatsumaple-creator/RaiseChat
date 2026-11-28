@@ -1,11 +1,13 @@
 import {
   addChannelMemberSchema,
   createChannelSchema,
+  createDmSchema,
   type AdminChannelResponse,
   type ChannelMemberResponse,
   type ChannelResponse,
+  type DmPeer,
 } from '@raisechat/shared';
-import { and, asc, desc, eq, ilike, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, inArray, ne, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { channelOf, requireChannel } from '../auth/channel-guards';
@@ -28,7 +30,7 @@ const channelIdSchema = z.uuid();
 
 type ChannelRow = typeof channels.$inferSelect;
 
-function toChannelResponse(row: ChannelRow): ChannelResponse {
+function toChannelResponse(row: ChannelRow, peer: DmPeer | null = null): ChannelResponse {
   return {
     id: row.id,
     workspaceId: row.workspaceId,
@@ -36,7 +38,34 @@ function toChannelResponse(row: ChannelRow): ChannelResponse {
     name: row.name,
     isDefault: row.isDefault,
     createdBy: row.createdBy,
+    peer,
   };
+}
+
+/** DM の相手(me から見た、もう 1 人)を、チャンネルごとに取る */
+async function loadPeers(db: Db, me: string, dmIds: string[]): Promise<Map<string, DmPeer>> {
+  const result = new Map<string, DmPeer>();
+  if (dmIds.length === 0) return result;
+  const rows = await db
+    .select({
+      channelId: channelMembers.channelId,
+      id: users.id,
+      username: users.username,
+      displayName: users.displayName,
+      avatarKey: users.avatarKey,
+    })
+    .from(channelMembers)
+    .innerJoin(users, eq(users.id, channelMembers.userId))
+    .where(and(inArray(channelMembers.channelId, dmIds), ne(channelMembers.userId, me)));
+  for (const r of rows) {
+    result.set(r.channelId, {
+      id: r.id,
+      username: r.username,
+      displayName: r.displayName,
+      avatarUrl: avatarUrlFor(r.id, r.avatarKey),
+    });
+  }
+  return result;
 }
 
 /** LIKE の特殊文字(% _ \)を、文字そのものとして扱うためにエスケープする */
@@ -132,6 +161,98 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     },
   );
 
+  // FR-102: DM の作成。相手は、同じワークスペースの active メンバーだけ(自分自身は不可)。
+  // すでにあれば、それを返す(200)。dm_key の一意制約で、同時に作っても 1 つになる
+  app.post<{ Params: { ws: string } }>(
+    '/api/workspaces/:ws/dms',
+    { preHandler: requireMember(db) },
+    async (request, reply): Promise<ChannelResponse> => {
+      const { userId: targetId } = parseWith(createDmSchema, request.body);
+      const me = authOf(request).user.id;
+      const workspaceId = workspaceOf(request).workspaceId;
+      if (targetId === me) {
+        throw new AppError(400, 'bad_request', '自分自身との DM は、作成できません。');
+      }
+      const [target] = await db
+        .select({
+          id: users.id,
+          username: users.username,
+          displayName: users.displayName,
+          avatarKey: users.avatarKey,
+        })
+        .from(memberships)
+        .innerJoin(users, eq(users.id, memberships.userId))
+        .where(
+          and(
+            eq(memberships.workspaceId, workspaceId),
+            eq(memberships.userId, targetId),
+            eq(memberships.status, 'active'),
+          ),
+        );
+      if (!target) {
+        throw new AppError(400, 'bad_request', '同じワークスペースのメンバーだけ、指定できます。');
+      }
+      const peerOf = (u: {
+        id: string;
+        username: string;
+        displayName: string;
+        avatarKey: string | null;
+      }): DmPeer => ({
+        id: u.id,
+        username: u.username,
+        displayName: u.displayName,
+        avatarUrl: avatarUrlFor(u.id, u.avatarKey),
+      });
+      const dmKey = [me, targetId].sort().join(':');
+
+      let created: ChannelRow;
+      try {
+        created = await db.transaction(async (tx) => {
+          const [row] = await tx
+            .insert(channels)
+            .values({ workspaceId, type: 'dm', name: null, createdBy: null, dmKey })
+            .returning();
+          await tx.insert(channelMembers).values([
+            { channelId: row!.id, userId: me },
+            { channelId: row!.id, userId: targetId },
+          ]);
+          return row!;
+        });
+      } catch (error) {
+        if (!isUniqueViolation(error)) throw error;
+        const [existing] = await db
+          .select()
+          .from(channels)
+          .where(
+            and(
+              eq(channels.workspaceId, workspaceId),
+              eq(channels.type, 'dm'),
+              eq(channels.dmKey, dmKey),
+            ),
+          );
+        return toChannelResponse(existing!, peerOf(target));
+      }
+
+      // 2 人の全ソケットを、ch ルームに参加させてから(先に更新)、それぞれの user ルームへ通知する(設計書 §6.3)。
+      // 相手(peer)は、受け取る人から見たもの
+      realtime.joinUser(me, [chRoom(created.id)]);
+      realtime.joinUser(targetId, [chRoom(created.id)]);
+      const [mine] = await db
+        .select({
+          id: users.id,
+          username: users.username,
+          displayName: users.displayName,
+          avatarKey: users.avatarKey,
+        })
+        .from(users)
+        .where(eq(users.id, me));
+      realtime.emit(userRoom(targetId), 'dm:created', toChannelResponse(created, peerOf(mine!)));
+      const body = toChannelResponse(created, peerOf(target));
+      realtime.emit(userRoom(me), 'dm:created', body);
+      return reply.status(201).send(body);
+    },
+  );
+
   // FR-203: 自分が参加しているチャンネル。joinable=1 なら、未参加のパブリックチャンネル
   app.get<{ Params: { ws: string } }>(
     '/api/workspaces/:ws/channels',
@@ -157,7 +278,12 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
           ),
         )
         .orderBy(desc(channels.isDefault), asc(sql`lower(${channels.name})`), asc(channels.id));
-      return rows.map(toChannelResponse);
+      const peers = await loadPeers(
+        db,
+        userId,
+        rows.filter((r) => r.type === 'dm').map((r) => r.id),
+      );
+      return rows.map((r) => toChannelResponse(r, peers.get(r.id) ?? null));
     },
   );
 

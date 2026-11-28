@@ -178,6 +178,7 @@ describe('POST /api/workspaces/:ws/channels(FR-202)', () => {
       name: '雑談',
       isDefault: false,
       createdBy: owner.id,
+      peer: null,
     });
     expect(await isParticipant(res.json().id, owner)).toBe(true);
   });
