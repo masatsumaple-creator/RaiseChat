@@ -10,6 +10,7 @@ import { hashSecret, verifyAgainstDummy, verifySecret } from '../auth/password';
 import { createSession, type SessionUser } from '../auth/sessions';
 import { avatarUrlFor } from '../profile/avatar';
 import { generateRecoveryCode, normalizeRecoveryCode } from '../auth/tokens';
+import { isUniqueViolation } from '../db/errors';
 import { AppError, parseWith } from '../errors';
 import { rateLimitedError, rateLimitGuard, type RateLimiter } from '../rate-limit';
 import { SESSION_COOKIE_NAME, sessionCookieOptions } from '../session-cookie';
@@ -38,12 +39,6 @@ export function toMe(user: SessionUser): MeResponse {
     statusText: user.statusText,
     avatarUrl: avatarUrlFor(user.id, user.avatarKey),
   };
-}
-
-/** PostgreSQL の一意制約違反(23505)か。Drizzle はドライバのエラーを cause に包む */
-function isUniqueViolation(error: unknown): boolean {
-  const e = error as { code?: string; cause?: { code?: string } };
-  return (e.cause?.code ?? e.code) === '23505';
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): void {

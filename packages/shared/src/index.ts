@@ -11,6 +11,20 @@ export {
   registerRequestSchema,
   usernameSchema,
 } from './auth';
+export {
+  CHANNEL_NAME_MAX_LENGTH,
+  CREATABLE_CHANNEL_TYPES,
+  addChannelMemberSchema,
+  createChannelSchema,
+} from './channel';
+export type {
+  AddChannelMemberRequest,
+  AdminChannelResponse,
+  ChannelMemberResponse,
+  ChannelResponse,
+  ChannelType,
+  CreateChannelRequest,
+} from './channel';
 export { WORKSPACE_NAME_MAX_LENGTH, createWorkspaceSchema } from './workspace';
 export type {
   CreateWorkspaceRequest,
