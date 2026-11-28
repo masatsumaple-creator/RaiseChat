@@ -117,22 +117,30 @@ export function buildApp({
     loginIpLimiter: new RateLimiter({ limit: 30, windowMs: 15 * 60 * 1000 }),
   });
 
+  // 実体の削除を、すぐに試す。失敗しても、削除キューに残り、定期処理で再試行される
+  const kickStorageDeletions = () => {
+    processStorageDeletions(db, storage, {
+      onError: (error, key) => app.log.error({ err: error, storageKey: key }, '実体の削除に失敗'),
+    }).catch((error) => app.log.error({ err: error }, '削除キューの処理に失敗'));
+  };
+
   registerProfileRoutes(app, {
     db,
     config,
     storage,
     realtime,
-    // 旧アバターの実体の削除を、すぐに試す。失敗しても、キューに残り、定期処理で再試行される
-    onAvatarReplaced: () => {
-      processStorageDeletions(db, storage, {
-        onError: (error, key) => app.log.error({ err: error, storageKey: key }, '実体の削除に失敗'),
-      }).catch((error) => app.log.error({ err: error }, '削除キューの処理に失敗'));
-    },
+    // 旧アバターの実体の削除を、すぐに試す
+    onAvatarReplaced: kickStorageDeletions,
   });
 
   registerWorkspaceRoutes(app, { db, realtime });
   registerChannelRoutes(app, { db, realtime });
-  registerMessageRoutes(app, { db, realtime });
+  registerMessageRoutes(app, {
+    db,
+    realtime,
+    storage,
+    onStorageDeletionQueued: kickStorageDeletions,
+  });
   registerThreadRoutes(app, { db, realtime });
   registerReactionRoutes(app, { db, realtime });
   registerInvitationRoutes(app, {

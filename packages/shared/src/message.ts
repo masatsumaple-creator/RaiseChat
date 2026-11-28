@@ -6,6 +6,23 @@ import { codePointLength } from './text';
 /** メッセージ本文の上限(設計書 §2。DB の CHECK と同じ。コードポイント数) */
 export const MESSAGE_BODY_MAX_LENGTH = 4000;
 
+/** 1 つの投稿に付けられる添付の数(画像と動画の合計。FR-107) */
+export const ATTACHMENT_MAX_FILES = 5;
+/** 添付のサイズの上限(バイト)。画像 10MB、動画 50MB(FR-107) */
+export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+export const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
+
+/** 添付(FR-107)。取得は GET /attachments/:id */
+export interface AttachmentResponse {
+  id: string;
+  kind: 'image' | 'video';
+  /** 保存した MIME(許可形式だけ: image/jpeg・png・gif・webp、video/mp4・webm) */
+  mime: string;
+  sizeBytes: number;
+  /** 元のファイル名(表示用) */
+  name: string;
+}
+
 /** 一覧の 1 ページの件数(設計書 §5) */
 export const MESSAGE_PAGE_SIZE = 50;
 
@@ -69,6 +86,8 @@ export interface MessageResponse {
   reactions: ReactionSummary[];
   /** 有効なメンション(その人が参加者のときに登録されたもの。ユーザー名の順。FR-109) */
   mentions: MentionResponse[];
+  /** 添付(トップレベルの投稿だけ。返信は、常に空。FR-107) */
+  attachments: AttachmentResponse[];
   deleted: false;
 }
 

@@ -20,6 +20,7 @@ function msg(id: number, authorId = 'u1'): MessageResponse {
     replyCount: 0,
     reactions: [],
     mentions: [],
+    attachments: [],
     deleted: false,
   };
 }

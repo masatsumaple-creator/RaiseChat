@@ -29,6 +29,9 @@ export type {
   DmPeer,
 } from './channel';
 export {
+  ATTACHMENT_MAX_FILES,
+  IMAGE_MAX_BYTES,
+  VIDEO_MAX_BYTES,
   MESSAGE_BODY_MAX_LENGTH,
   MESSAGE_PAGE_SIZE,
   hasForbiddenControlChars,
@@ -36,6 +39,7 @@ export {
   postMessageSchema,
 } from './message';
 export type {
+  AttachmentResponse,
   DeletedMessageResponse,
   MessageAuthor,
   MessageListItem,

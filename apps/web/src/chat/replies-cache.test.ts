@@ -24,6 +24,7 @@ function msg(id: number, parentId: number | null = null, extra: Partial<MessageR
     replyCount: 0,
     reactions: [],
     mentions: [],
+    attachments: [],
     deleted: false,
     ...extra,
   } as MessageResponse;

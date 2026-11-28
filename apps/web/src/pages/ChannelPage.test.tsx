@@ -39,6 +39,7 @@ function message(id: number, body: string, authorId = 'u9'): MessageResponse {
     replyCount: 0,
     reactions: [],
     mentions: [],
+    attachments: [],
     deleted: false,
   };
 }

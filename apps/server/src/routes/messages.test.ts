@@ -145,6 +145,7 @@ describe('POST /api/channels/:ch/messages(FR-101)', () => {
       replyCount: 0,
       reactions: [],
       mentions: [],
+      attachments: [],
       deleted: false,
     });
     const [row] = await testDb.db.select().from(messages).where(eq(messages.id, res.json().id));
