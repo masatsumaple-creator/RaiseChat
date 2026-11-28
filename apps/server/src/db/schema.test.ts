@@ -5,6 +5,7 @@ import {
   channelMembers,
   channels,
   memberships,
+  messages,
   sessions,
   storageDeletions,
   users,
@@ -385,5 +386,71 @@ describe('channels / channel_members(FR-202, FR-203)', () => {
     expect(
       await testDb.db.select().from(channelMembers).where(eq(channelMembers.channelId, ch!.id)),
     ).toEqual([]);
+  });
+});
+
+describe('messages(FR-103、104、105)', () => {
+  async function setupChannel(name: string) {
+    const owner = await createUser(name + '_owner');
+    const ws = await createWorkspace(owner.id);
+    const [a] = await testDb.db
+      .insert(channels)
+      .values({ workspaceId: ws.id, type: 'public', name: 'a' })
+      .returning();
+    const [b] = await testDb.db
+      .insert(channels)
+      .values({ workspaceId: ws.id, type: 'public', name: 'b' })
+      .returning();
+    const insert = (values: Partial<typeof messages.$inferInsert> & { channelId: string }) =>
+      testDb.db
+        .insert(messages)
+        .values({ userId: owner.id, body: 'x', ...values })
+        .returning();
+    return { owner, a: a!, b: b!, insert };
+  }
+
+  it('本文が null であることと、削除済み(deleted_at)であることは、一致する(どちらか一方だけは不可)', async () => {
+    const { a, insert } = await setupChannel('msg_del');
+    expect(await sqlState(insert({ channelId: a.id, body: null }))).toBe(CHECK_VIOLATION);
+    expect(await sqlState(insert({ channelId: a.id, body: 'x', deletedAt: new Date() }))).toBe(
+      CHECK_VIOLATION,
+    );
+    await expect(
+      insert({ channelId: a.id, body: null, deletedAt: new Date() }),
+    ).resolves.toHaveLength(1);
+    await expect(insert({ channelId: a.id, body: 'x' })).resolves.toHaveLength(1);
+  });
+
+  it('本文は 1〜4000 文字(null は、削除済みの場合だけ)', async () => {
+    const { a, insert } = await setupChannel('msg_len');
+    expect(await sqlState(insert({ channelId: a.id, body: '' }))).toBe(CHECK_VIOLATION);
+    expect(await sqlState(insert({ channelId: a.id, body: 'a'.repeat(4001) }))).toBe(
+      CHECK_VIOLATION,
+    );
+    await expect(insert({ channelId: a.id, body: '😀'.repeat(4000) })).resolves.toHaveLength(1);
+  });
+
+  it('返信の親は、同じチャンネルのメッセージだけ(別のチャンネルの親は不可)', async () => {
+    const { a, b, insert } = await setupChannel('msg_parent');
+    const [parent] = await insert({ channelId: a.id });
+    await expect(insert({ channelId: a.id, parentId: parent!.id })).resolves.toHaveLength(1);
+    expect(await sqlState(insert({ channelId: b.id, parentId: parent!.id }))).toBe(
+      FOREIGN_KEY_VIOLATION,
+    );
+    expect(await sqlState(insert({ channelId: a.id, parentId: 999_999_999 }))).toBe(
+      FOREIGN_KEY_VIOLATION,
+    );
+  });
+
+  it('親を物理削除すると(チャンネルの削除など)、返信も連鎖して消える。チャンネルの削除で、メッセージも消える', async () => {
+    const { a, insert } = await setupChannel('msg_cascade');
+    const [parent] = await insert({ channelId: a.id });
+    const [reply] = await insert({ channelId: a.id, parentId: parent!.id });
+    await testDb.db.delete(messages).where(eq(messages.id, parent!.id));
+    expect(await testDb.db.select().from(messages).where(eq(messages.id, reply!.id))).toEqual([]);
+
+    const [m] = await insert({ channelId: a.id });
+    await testDb.db.delete(channels).where(eq(channels.id, a.id));
+    expect(await testDb.db.select().from(messages).where(eq(messages.id, m!.id))).toEqual([]);
   });
 });

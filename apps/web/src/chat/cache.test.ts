@@ -1,8 +1,11 @@
-import type { MessageResponse } from '@raisechat/shared';
+import type { DeletedMessageResponse, MessageResponse } from '@raisechat/shared';
 import { describe, expect, it } from 'vitest';
 import {
   addMessage,
+  applyMessageDeleted,
   keepFirstPage,
+  replaceMessage,
+  setReplyCount,
   toDisplayOrder,
   updateAuthor,
   type MessagesData,
@@ -15,6 +18,10 @@ function msg(id: number, authorId = 'u1', body = `m${id}`): MessageResponse {
     author: { id: authorId, username: authorId, displayName: authorId, avatarUrl: null },
     body,
     createdAt: '2026-01-01T00:00:00.000Z',
+    parentId: null,
+    editedAt: null,
+    replyCount: 0,
+    deleted: false,
   };
 }
 
@@ -92,7 +99,7 @@ describe('updateAuthor', () => {
       statusText: '',
       avatarUrl: '/api/users/u1/avatar?v=x',
     })!;
-    const [a, b] = next.pages[0]!.messages;
+    const [a, b] = next.pages[0]!.messages as MessageResponse[];
     expect(a!.author.displayName).toBe('u2');
     expect(b!.author).toMatchObject({
       displayName: '新しい名前',
@@ -107,5 +114,67 @@ describe('toDisplayOrder', () => {
     d.pages[1]!.messages.unshift(msg(4)); // ページの境目で、重なった場合
     expect(toDisplayOrder(d).map((m) => m.id)).toEqual([2, 3, 4, 5]);
     expect(toDisplayOrder(undefined)).toEqual([]);
+  });
+});
+
+describe('replaceMessage(message:updated)', () => {
+  it('同じ ID のメッセージを、編集後のものに置き換える', () => {
+    const edited = { ...msg(4), body: '編集後', editedAt: '2026-01-02T00:00:00.000Z' };
+    const next = replaceMessage(data(), edited)!;
+    expect(next.pages[0]!.messages[1]).toEqual(edited);
+    expect(next.pages[0]!.messages[0]!.id).toBe(5);
+  });
+
+  it('一覧にないものは、何もしない(同じオブジェクトを返す)。削除済みは、削除を優先する', () => {
+    const d = data();
+    expect(replaceMessage(d, msg(99))).toBe(d);
+    const withDeleted = applyMessageDeleted(d, { id: 4, replyCount: 2 })!;
+    // 削除の後に、古い編集が届いても、戻さない
+    expect(replaceMessage(withDeleted, { ...msg(4), body: '古い編集' })).toBe(withDeleted);
+    expect(replaceMessage(undefined, msg(1))).toBeUndefined();
+  });
+});
+
+describe('applyMessageDeleted(message:deleted)', () => {
+  it('返信が残っていれば、本文のない「削除済みの親」にする(返信数つき)', () => {
+    const next = applyMessageDeleted(data(), { id: 4, replyCount: 3 })!;
+    const placeholder = next.pages[0]!.messages[1] as DeletedMessageResponse;
+    expect(placeholder).toEqual({
+      id: 4,
+      channelId: 'c1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      replyCount: 3,
+      deleted: true,
+    });
+    expect(JSON.stringify(next)).not.toContain('"m4"'); // 本文は残らない
+  });
+
+  it('返信がなければ、一覧から外す', () => {
+    const next = applyMessageDeleted(data(), { id: 5, replyCount: 0 })!;
+    expect(next.pages[0]!.messages.map((m) => m.id)).toEqual([4]);
+  });
+
+  it('一覧にない ID は、何もしない', () => {
+    const d = data();
+    expect(applyMessageDeleted(d, { id: 99, replyCount: 0 })).toBe(d);
+  });
+});
+
+describe('setReplyCount(thread:reply-deleted)', () => {
+  it('親の返信数を更新する', () => {
+    const next = setReplyCount(data(), 4, 7)!;
+    expect((next.pages[0]!.messages[1] as MessageResponse).replyCount).toBe(7);
+  });
+
+  it('削除済みの親は、返信が 0 になったら、一覧から外す。通常の親は、残す', () => {
+    const deleted = applyMessageDeleted(data(), { id: 4, replyCount: 1 })!;
+    expect(setReplyCount(deleted, 4, 0)!.pages[0]!.messages.map((m) => m.id)).toEqual([5]);
+    const normal = setReplyCount(data(), 4, 0)!;
+    expect(normal.pages[0]!.messages.map((m) => m.id)).toEqual([5, 4]);
+  });
+
+  it('変化がなければ、同じオブジェクトを返す', () => {
+    const d = data();
+    expect(setReplyCount(d, 4, 0)).toBe(d);
   });
 });

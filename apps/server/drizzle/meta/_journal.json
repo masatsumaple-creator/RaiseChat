@@ -43,6 +43,13 @@
       "when": 1795858242952,
       "tag": "0005_daily_inertia",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795862364466,
+      "tag": "0006_clumsy_wolfpack",
+      "breakpoints": true
     }
   ]
 }

@@ -32,6 +32,10 @@ function message(id: number, body: string, authorId = 'u9'): MessageResponse {
     author: { id: authorId, username: authorId, displayName: `名前${authorId}`, avatarUrl: null },
     body,
     createdAt: '2026-01-01T09:00:00.000Z',
+    parentId: null,
+    editedAt: null,
+    replyCount: 0,
+    deleted: false,
   };
 }
 
@@ -142,6 +146,53 @@ describe('ChannelPage(FR-101, 203, 204)', () => {
       ]),
     );
     expect(within(list).getAllByText(/名前u9/)).toHaveLength(3);
+  });
+
+  it('編集されたメッセージには「編集済み」、返信があれば返信数を表示する', async () => {
+    renderChannel('c1', {
+      ...base,
+      'GET /api/channels/c1/messages': () =>
+        json(200, {
+          messages: [
+            { ...message(2, '直した'), editedAt: '2026-01-02T00:00:00.000Z', replyCount: 3 },
+            message(1, 'そのまま'),
+          ],
+          nextCursor: null,
+        }),
+    });
+    const list = await screen.findByRole('list', { name: 'メッセージ一覧' });
+    const items = await within(list).findAllByRole('listitem');
+    expect(items[0]!.textContent).toContain('そのまま');
+    expect(items[0]!.textContent).not.toContain('編集済み');
+    expect(items[1]!.textContent).toContain('直した');
+    expect(items[1]!.textContent).toContain('(編集済み)');
+    expect(items[1]!.textContent).toContain('返信 3 件');
+  });
+
+  it('削除済みの親は、本文・投稿者を出さず、「削除されました」と返信数だけを表示する', async () => {
+    renderChannel('c1', {
+      ...base,
+      'GET /api/channels/c1/messages': () =>
+        json(200, {
+          messages: [
+            {
+              id: 7,
+              channelId: 'c1',
+              createdAt: '2026-01-01T09:00:00.000Z',
+              replyCount: 2,
+              deleted: true,
+            },
+            message(6, '普通'),
+          ],
+          nextCursor: null,
+        }),
+    });
+    const list = await screen.findByRole('list', { name: 'メッセージ一覧' });
+    const items = await within(list).findAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(items[1]!.textContent).toContain('このメッセージは、削除されました');
+    expect(items[1]!.textContent).toContain('返信 2 件');
+    expect(items[1]!.textContent).not.toContain('名前');
   });
 
   it('メッセージがなければ、案内を出す', async () => {

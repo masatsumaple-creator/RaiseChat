@@ -50,17 +50,40 @@ export interface MessageAuthor {
   avatarUrl: string | null;
 }
 
+/** メッセージ(トップレベルと、スレッドの返信で共通。設計書 §6.4: REST の応答と、WebSocket のペイロードは、同じ形) */
 export interface MessageResponse {
   id: number;
   channelId: string;
+  /** スレッドの返信なら、親(トップレベル)の ID。トップレベルは null */
+  parentId: number | null;
   author: MessageAuthor;
   body: string;
   createdAt: string;
+  /** 編集されていれば、その日時(「編集済み」の表示に使う)。されていなければ null */
+  editedAt: string | null;
+  /** スレッドの返信数(削除済みの返信は数えない)。返信自身は 0 */
+  replyCount: number;
+  deleted: false;
 }
+
+/**
+ * 削除済みのトップレベルのメッセージ(FR-104、105)。本文と投稿者は含まない。
+ * 返信が 1 つ以上残っているときだけ、一覧に出る(「削除されました」と表示して、返信は残す)。
+ */
+export interface DeletedMessageResponse {
+  id: number;
+  channelId: string;
+  createdAt: string;
+  replyCount: number;
+  deleted: true;
+}
+
+/** 一覧の 1 件: 通常のメッセージ、または、削除済みの親 */
+export type MessageListItem = MessageResponse | DeletedMessageResponse;
 
 export interface MessagePageResponse {
   /** 新しい順 */
-  messages: MessageResponse[];
+  messages: MessageListItem[];
   /** 次のページを取るための cursor。次のページがなければ null */
   nextCursor: number | null;
 }

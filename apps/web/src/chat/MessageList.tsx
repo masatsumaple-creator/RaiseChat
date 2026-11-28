@@ -72,14 +72,26 @@ export function MessageList({ channelId }: { channelId: string }) {
         )}
         {query.isSuccess && messages.length === 0 && <p>まだ、メッセージはありません。</p>}
         <ul aria-label="メッセージ一覧">
-          {messages.map((m) => (
-            <li key={m.id}>
-              {m.author.avatarUrl && <img src={m.author.avatarUrl} alt="" width={24} height={24} />}
-              <strong>{m.author.displayName}</strong>{' '}
-              <time dateTime={m.createdAt}>{new Date(m.createdAt).toLocaleString('ja-JP')}</time>
-              <div className="message-body">{m.body}</div>
-            </li>
-          ))}
+          {messages.map((m) =>
+            m.deleted ? (
+              // 返信が残っている親だけが、一覧に出る(FR-105)
+              <li key={m.id} className="message-deleted">
+                このメッセージは、削除されました。
+                {m.replyCount > 0 && <span>(返信 {m.replyCount} 件)</span>}
+              </li>
+            ) : (
+              <li key={m.id}>
+                {m.author.avatarUrl && (
+                  <img src={m.author.avatarUrl} alt="" width={24} height={24} />
+                )}
+                <strong>{m.author.displayName}</strong>{' '}
+                <time dateTime={m.createdAt}>{new Date(m.createdAt).toLocaleString('ja-JP')}</time>
+                {m.editedAt && <span className="edited">(編集済み)</span>}
+                <div className="message-body">{m.body}</div>
+                {m.replyCount > 0 && <div className="reply-count">返信 {m.replyCount} 件</div>}
+              </li>
+            ),
+          )}
         </ul>
       </div>
       <MessageComposer onSend={send} />

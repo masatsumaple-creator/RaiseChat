@@ -3,12 +3,14 @@ import {
   bigint,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   pgTable,
   primaryKey,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
@@ -198,8 +200,9 @@ export const invitations = pgTable(
 );
 
 /**
- * メッセージ。フェーズ 2 では、投稿と取得に使う列だけを持つ(FR-101)。
- * スレッド(parent_id)・編集(edited_at)・削除(deleted_at、body の null 化)は、フェーズ 3 で追加する。
+ * メッセージ(FR-101、103〜105)。parent_id が null ならトップレベル、そうでなければスレッドの返信(1 段のみ。
+ * 返信の親が、トップレベルであることは、DB では表せないため、アプリで検証する。設計書 §2.1)。
+ * 論理削除(FR-104)では、本文を null にして deleted_at を設定する(本文の有無と、削除の有無は、一致する)。
  */
 export const messages = pgTable(
   'messages',
@@ -211,12 +214,33 @@ export const messages = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id),
-    body: text('body').notNull(),
+    parentId: bigint('parent_id', { mode: 'number' }),
+    body: text('body'), // 削除時は null(FR-104)
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (t) => [
-    check('messages_body_length', sql`char_length(${t.body}) BETWEEN 1 AND 4000`),
-    // チャンネルの履歴(新しい順)
-    index('messages_channel_idx').on(t.channelId, sql`${t.id} DESC`),
+    check(
+      'messages_body_length',
+      sql`${t.body} IS NULL OR char_length(${t.body}) BETWEEN 1 AND 4000`,
+    ),
+    // 本文が null であることと、削除済みであることは、同じ
+    check('messages_deleted_check', sql`(${t.deletedAt} IS NULL) = (${t.body} IS NOT NULL)`),
+    // 親が、同じチャンネルのメッセージであることを、DB で保証する(複合外部キー)
+    unique('messages_id_channel_key').on(t.id, t.channelId),
+    foreignKey({
+      columns: [t.parentId, t.channelId],
+      foreignColumns: [t.id, t.channelId],
+      name: 'messages_parent_fk',
+    }).onDelete('cascade'),
+    // チャンネルの履歴(トップレベル。新しい順)
+    index('messages_channel_top_idx')
+      .on(t.channelId, sql`${t.id} DESC`)
+      .where(sql`${t.parentId} IS NULL`),
+    // スレッドの返信
+    index('messages_thread_idx')
+      .on(t.parentId, t.id)
+      .where(sql`${t.parentId} IS NOT NULL`),
   ],
 );
