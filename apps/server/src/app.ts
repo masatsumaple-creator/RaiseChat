@@ -9,6 +9,7 @@ import { registerAuthRoutes } from './routes/auth';
 import { registerChannelRoutes } from './routes/channels';
 import { registerInvitationRoutes } from './routes/invitations';
 import { registerMessageRoutes } from './routes/messages';
+import { registerThreadRoutes } from './routes/threads';
 import { registerProfileRoutes } from './routes/profile';
 import { registerWorkspaceRoutes } from './routes/workspaces';
 import { Realtime, type RealtimeOptions } from './realtime/realtime';
@@ -131,6 +132,7 @@ export function buildApp({
   registerWorkspaceRoutes(app, { db, realtime });
   registerChannelRoutes(app, { db, realtime });
   registerMessageRoutes(app, { db, realtime });
+  registerThreadRoutes(app, { db, realtime });
   registerInvitationRoutes(app, {
     db,
     realtime,

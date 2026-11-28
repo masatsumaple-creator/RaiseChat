@@ -57,6 +57,12 @@ export function applyServerEvents(socket: Socket<ServerToClientEvents>, queryCli
       applyMessageDeleted(data, { id, replyCount }),
     );
   });
+  socket.on('thread:reply-created', ({ reply, replyCount }) => {
+    if (reply.parentId === null) return;
+    queryClient.setQueryData<MessagesData>(messagesKey(reply.channelId), (data) =>
+      setReplyCount(data, reply.parentId!, replyCount),
+    );
+  });
   // 返信は、一覧に出ない。親の返信数だけを更新する(返信の一覧は、スレッドの画面で扱う)
   socket.on('thread:reply-deleted', ({ channelId, parentId, replyCount }) => {
     queryClient.setQueryData<MessagesData>(messagesKey(channelId), (data) =>

@@ -162,6 +162,13 @@ describe('applyServerEvents: 編集・削除', () => {
     expect(read().map((m) => m.id)).toEqual([5]);
   });
 
+  it('thread:reply-created: 親の返信数を更新する。返信は、一覧に加えない', () => {
+    const { emit, read } = setup();
+    emit('thread:reply-created', { reply: { ...msg(9), parentId: 5 }, replyCount: 3 });
+    expect(read()[0]).toMatchObject({ id: 5, replyCount: 3 });
+    expect(read().map((m) => m.id)).toEqual([5, 4]);
+  });
+
   it('thread:reply-deleted: 親の返信数を更新する。返信は、一覧に加えない', () => {
     const { emit, read } = setup();
     emit('thread:reply-deleted', { id: 9, channelId: 'c1', parentId: 5, replyCount: 4 });

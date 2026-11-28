@@ -8,6 +8,7 @@ import {
   messages,
   sessions,
   storageDeletions,
+  threadMembers,
   users,
   workspaces,
 } from './schema';
@@ -452,5 +453,36 @@ describe('messages(FR-103、104、105)', () => {
     const [m] = await insert({ channelId: a.id });
     await testDb.db.delete(channels).where(eq(channels.id, a.id));
     expect(await testDb.db.select().from(messages).where(eq(messages.id, m!.id))).toEqual([]);
+  });
+});
+
+describe('thread_members(FR-105)', () => {
+  it('同じ人は、同じスレッドに、2 回は入れない。親を物理削除すると、スレッドの参加者も消える', async () => {
+    const owner = await createUser('thr_owner');
+    const ws = await createWorkspace(owner.id);
+    const [ch] = await testDb.db
+      .insert(channels)
+      .values({ workspaceId: ws.id, type: 'public', name: 'thr' })
+      .returning();
+    const [root] = await testDb.db
+      .insert(messages)
+      .values({ channelId: ch!.id, userId: owner.id, body: '親' })
+      .returning();
+    await testDb.db.insert(threadMembers).values({ rootMessageId: root!.id, userId: owner.id });
+    expect(
+      await sqlState(
+        testDb.db.insert(threadMembers).values({ rootMessageId: root!.id, userId: owner.id }),
+      ),
+    ).toBe(UNIQUE_VIOLATION);
+    expect(
+      await sqlState(
+        testDb.db.insert(threadMembers).values({ rootMessageId: 999_999_999, userId: owner.id }),
+      ),
+    ).toBe(FOREIGN_KEY_VIOLATION);
+
+    await testDb.db.delete(messages).where(eq(messages.id, root!.id));
+    expect(
+      await testDb.db.select().from(threadMembers).where(eq(threadMembers.rootMessageId, root!.id)),
+    ).toEqual([]);
   });
 });

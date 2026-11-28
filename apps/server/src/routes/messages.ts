@@ -73,7 +73,7 @@ const replyCountOf = (parentId: typeof messages.id) =>
   sql<number>`(SELECT count(*)::int FROM messages r WHERE r.parent_id = ${parentId} AND r.deleted_at IS NULL)`;
 
 /** 削除済みでない返信の数を数える */
-async function countReplies(db: Db, parentId: number): Promise<number> {
+export async function countReplies(db: Db, parentId: number): Promise<number> {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(messages)
