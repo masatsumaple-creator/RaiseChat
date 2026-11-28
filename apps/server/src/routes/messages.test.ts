@@ -140,6 +140,10 @@ describe('POST /api/channels/:ch/messages(FR-101)', () => {
       },
       body: 'こんにちは',
       createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      parentId: null,
+      editedAt: null,
+      replyCount: 0,
+      deleted: false,
     });
     const [row] = await testDb.db.select().from(messages).where(eq(messages.id, res.json().id));
     expect(row).toMatchObject({ channelId: general, userId: owner.id, body: 'こんにちは' });

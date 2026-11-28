@@ -14,6 +14,10 @@ function msg(id: number, authorId = 'u1'): MessageResponse {
     author: { id: authorId, username: authorId, displayName: authorId, avatarUrl: null },
     body: `m${id}`,
     createdAt: '2026-01-01T00:00:00.000Z',
+    parentId: null,
+    editedAt: null,
+    replyCount: 0,
+    deleted: false,
   };
 }
 
@@ -124,7 +128,45 @@ describe('applyServerEvents(受信したイベントを、キャッシュに反�
       avatarUrl: null,
     });
     const data = client.getQueryData<MessagesData>(messagesKey('c1'))!;
-    expect(data.pages[0]!.messages.map((m) => m.author.displayName)).toEqual(['u2', '改名']);
+    expect((data.pages[0]!.messages as MessageResponse[]).map((m) => m.author.displayName)).toEqual(
+      ['u2', '改名'],
+    );
+  });
+});
+
+describe('applyServerEvents: 編集・削除', () => {
+  function setup() {
+    const client = new QueryClient();
+    client.setQueryData(messagesKey('c1'), twoPages());
+    const { socket, emit } = fakeSocket();
+    applyServerEvents(socket, client);
+    const read = () => client.getQueryData<MessagesData>(messagesKey('c1'))!.pages[0]!.messages;
+    return { emit, read };
+  }
+
+  it('message:updated: 本文と「編集済み」を反映する', () => {
+    const { emit, read } = setup();
+    emit('message:updated', { ...msg(5), body: '直した', editedAt: '2026-01-02T00:00:00.000Z' });
+    expect(read()[0]).toMatchObject({
+      id: 5,
+      body: '直した',
+      editedAt: '2026-01-02T00:00:00.000Z',
+    });
+  });
+
+  it('message:deleted: 返信があれば、削除済みの親にし、なければ、外す', () => {
+    const { emit, read } = setup();
+    emit('message:deleted', { id: 5, channelId: 'c1', replyCount: 2 });
+    expect(read()[0]).toMatchObject({ id: 5, deleted: true, replyCount: 2 });
+    emit('message:deleted', { id: 4, channelId: 'c1', replyCount: 0 });
+    expect(read().map((m) => m.id)).toEqual([5]);
+  });
+
+  it('thread:reply-deleted: 親の返信数を更新する。返信は、一覧に加えない', () => {
+    const { emit, read } = setup();
+    emit('thread:reply-deleted', { id: 9, channelId: 'c1', parentId: 5, replyCount: 4 });
+    expect(read()[0]).toMatchObject({ id: 5, replyCount: 4 });
+    expect(read().map((m) => m.id)).toEqual([5, 4]);
   });
 });
 

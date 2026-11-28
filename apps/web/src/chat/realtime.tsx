@@ -5,7 +5,15 @@ import { io, type Socket } from 'socket.io-client';
 import { channelMembersKey, channelsKey, messagesKey } from '../api/channels';
 import { ME_QUERY_KEY } from '../api/me';
 import { membersKey, WORKSPACES_KEY } from '../api/workspaces';
-import { addMessage, keepFirstPage, updateAuthor, type MessagesData } from './cache';
+import {
+  addMessage,
+  applyMessageDeleted,
+  keepFirstPage,
+  replaceMessage,
+  setReplyCount,
+  updateAuthor,
+  type MessagesData,
+} from './cache';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -38,6 +46,22 @@ export function applyServerEvents(socket: Socket<ServerToClientEvents>, queryCli
     }
     // 冪等: 投稿の応答でも加えるため、同じ ID は加えない
     queryClient.setQueryData<MessagesData>(key, (data) => addMessage(data, message));
+  });
+  socket.on('message:updated', (message) => {
+    queryClient.setQueryData<MessagesData>(messagesKey(message.channelId), (data) =>
+      replaceMessage(data, message),
+    );
+  });
+  socket.on('message:deleted', ({ id, channelId, replyCount }) => {
+    queryClient.setQueryData<MessagesData>(messagesKey(channelId), (data) =>
+      applyMessageDeleted(data, { id, replyCount }),
+    );
+  });
+  // 返信は、一覧に出ない。親の返信数だけを更新する(返信の一覧は、スレッドの画面で扱う)
+  socket.on('thread:reply-deleted', ({ channelId, parentId, replyCount }) => {
+    queryClient.setQueryData<MessagesData>(messagesKey(channelId), (data) =>
+      setReplyCount(data, parentId, replyCount),
+    );
   });
   socket.on('workspace:added', () => {
     void queryClient.invalidateQueries({ queryKey: WORKSPACES_KEY });

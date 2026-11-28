@@ -17,6 +17,19 @@ export interface UserUpdatedPayload {
  */
 export interface ServerToClientEvents {
   'message:created': (message: MessageResponse) => void;
+  /** トップレベルのメッセージの編集 */
+  'message:updated': (message: MessageResponse) => void;
+  /** トップレベルのメッセージの削除(本文は含まない)。返信が残っていれば、画面は「削除されました」と表示する */
+  'message:deleted': (payload: { id: number; channelId: string; replyCount: number }) => void;
+  /** スレッドの返信の編集(返信の編集・削除では、message:* は送らない。設計書 §10 の T17) */
+  'thread:reply-updated': (message: MessageResponse) => void;
+  /** スレッドの返信の削除(本文は含まない)。親の返信数つき */
+  'thread:reply-deleted': (payload: {
+    id: number;
+    channelId: string;
+    parentId: number;
+    replyCount: number;
+  }) => void;
   'workspace:added': (workspace: WorkspaceResponse) => void;
   'member:joined': (payload: { workspaceId: string; member: MemberResponse }) => void;
   'channel:created': (channel: ChannelResponse) => void;

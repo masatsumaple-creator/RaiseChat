@@ -33,7 +33,9 @@ export {
   postMessageSchema,
 } from './message';
 export type {
+  DeletedMessageResponse,
   MessageAuthor,
+  MessageListItem,
   MessagePageResponse,
   MessageResponse,
   PostMessageRequest,

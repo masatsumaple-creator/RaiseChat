@@ -2,16 +2,19 @@ import {
   MESSAGE_PAGE_SIZE,
   messageListQuerySchema,
   postMessageSchema,
+  type DeletedMessageResponse,
+  type MessageListItem,
   type MessagePageResponse,
   type MessageResponse,
 } from '@raisechat/shared';
-import { and, desc, eq, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, lt, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { channelOf, requireChannel } from '../auth/channel-guards';
 import { authOf } from '../auth/guards';
+import { messageOf, requireAuthor } from '../auth/message-guards';
 import type { Db } from '../db/client';
 import { messages, users } from '../db/schema';
-import { parseWith } from '../errors';
+import { AppError, parseWith } from '../errors';
 import { avatarUrlFor } from '../profile/avatar';
 import { chRoom, type Realtime } from '../realtime/realtime';
 
@@ -27,14 +30,25 @@ interface AuthorRow {
   avatarKey: string | null;
 }
 
-/** メッセージの応答の形。WebSocket のイベント(message:created)でも、同じ形を使う */
+interface MessageRow {
+  id: number;
+  channelId: string;
+  parentId: number | null;
+  body: string;
+  createdAt: Date;
+  editedAt: Date | null;
+}
+
+/** メッセージの応答の形。WebSocket のイベントでも、同じ形を使う */
 export function toMessageResponse(
-  row: { id: number; channelId: string; body: string; createdAt: Date },
+  row: MessageRow,
   author: AuthorRow,
+  replyCount: number,
 ): MessageResponse {
   return {
     id: row.id,
     channelId: row.channelId,
+    parentId: row.parentId,
     author: {
       id: author.id,
       username: author.username,
@@ -43,12 +57,28 @@ export function toMessageResponse(
     },
     body: row.body,
     createdAt: row.createdAt.toISOString(),
+    editedAt: row.editedAt?.toISOString() ?? null,
+    replyCount,
+    deleted: false,
   };
 }
 
 /** チャンネルごとの advisory lock のキー(チャンネル ID から、64 ビットの整数を作る) */
 export function channelLockKey(channelId: string) {
   return sql`hashtextextended(${channelId}, 0)`;
+}
+
+/** あるメッセージの返信数(削除済みの返信は数えない)。外側の messages の行から参照する */
+const replyCountOf = (parentId: typeof messages.id) =>
+  sql<number>`(SELECT count(*)::int FROM messages r WHERE r.parent_id = ${parentId} AND r.deleted_at IS NULL)`;
+
+/** 削除済みでない返信の数を数える */
+async function countReplies(db: Db, parentId: number): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(messages)
+    .where(and(eq(messages.parentId, parentId), isNull(messages.deletedAt)));
+  return row?.n ?? 0;
 }
 
 export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDeps): void {
@@ -73,30 +103,31 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
           .returning();
         return inserted!;
       });
-      const response = toMessageResponse(row, {
-        id: me.id,
-        username: me.username,
-        displayName: me.displayName,
-        avatarKey: me.avatarKey,
-      });
+      const response = toMessageResponse({ ...row, body }, me, 0);
       // コミットの後に、チャンネルの参加者へ通知する(設計書 §6.4)
       realtime.emit(chRoom(channelId), 'message:created', response);
       return reply.status(201).send(response);
     },
   );
 
-  // FR-101: 新しい順に 50 件ずつ。cursor は、前のページの最後の ID(それより古いものを返す)
+  // FR-101: トップレベルを、新しい順に 50 件ずつ。cursor は、前のページの最後の ID(それより古いものを返す)。
+  // 削除済みのトップレベルは、返信(削除済みでないもの)が 1 つ以上あるときだけ含める(FR-104、105)
   app.get<{ Params: { ch: string } }>(
     '/api/channels/:ch/messages',
     { preHandler: requireChannel(db) },
     async (request): Promise<MessagePageResponse> => {
       const { cursor } = parseWith(messageListQuerySchema, request.query);
+      const replyCount = replyCountOf(messages.id);
       const rows = await db
         .select({
           id: messages.id,
           channelId: messages.channelId,
+          parentId: messages.parentId,
           body: messages.body,
           createdAt: messages.createdAt,
+          editedAt: messages.editedAt,
+          deletedAt: messages.deletedAt,
+          replyCount,
           author: {
             id: users.id,
             username: users.username,
@@ -109,6 +140,8 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
         .where(
           and(
             eq(messages.channelId, channelOf(request).id),
+            isNull(messages.parentId),
+            sql`(${messages.deletedAt} IS NULL OR ${replyCount} > 0)`,
             cursor === undefined ? undefined : lt(messages.id, cursor),
           ),
         )
@@ -118,10 +151,96 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
 
       const page = rows.slice(0, MESSAGE_PAGE_SIZE);
       const hasMore = rows.length > MESSAGE_PAGE_SIZE;
-      return {
-        messages: page.map((r) => toMessageResponse(r, r.author)),
-        nextCursor: hasMore ? page[page.length - 1]!.id : null,
+      const items: MessageListItem[] = page.map((r) => {
+        if (r.deletedAt !== null || r.body === null) {
+          const deleted: DeletedMessageResponse = {
+            id: r.id,
+            channelId: r.channelId,
+            createdAt: r.createdAt.toISOString(),
+            replyCount: r.replyCount,
+            deleted: true,
+          };
+          return deleted;
+        }
+        return toMessageResponse({ ...r, body: r.body }, r.author, r.replyCount);
+      });
+      return { messages: items, nextCursor: hasMore ? page[page.length - 1]!.id : null };
+    },
+  );
+
+  // FR-103: 編集(投稿者だけ)。本文が変わらなければ、何もせず成功(「編集済み」を付けない)
+  app.patch<{ Params: { id: string } }>(
+    '/api/messages/:id',
+    { preHandler: requireAuthor(db) },
+    async (request): Promise<MessageResponse> => {
+      const { body } = parseWith(postMessageSchema, request.body);
+      const current = messageOf(request);
+      const me = authOf(request).user;
+      const author = {
+        id: me.id,
+        username: me.username,
+        displayName: me.displayName,
+        avatarKey: me.avatarKey,
       };
+
+      if (body === current.body) {
+        return toMessageResponse(current, author, await countReplies(db, current.id));
+      }
+
+      // 削除済みでないときだけ更新する(判定の後に、削除された場合も、矛盾を残さない)
+      const [updated] = await db
+        .update(messages)
+        .set({ body, editedAt: sql`now()` })
+        .where(and(eq(messages.id, current.id), isNull(messages.deletedAt)))
+        .returning();
+      if (!updated) throw new AppError(404, 'not_found', '見つかりません。');
+
+      const response = toMessageResponse(
+        { ...updated, body },
+        author,
+        await countReplies(db, updated.id),
+      );
+      // トップレベルは message:updated、返信は thread:reply-updated(どちらか一方だけ送る。設計書 §10 の T17)
+      if (response.parentId === null) {
+        realtime.emit(chRoom(response.channelId), 'message:updated', response);
+      } else {
+        realtime.emit(chRoom(response.channelId), 'thread:reply-updated', response);
+      }
+      return response;
+    },
+  );
+
+  // FR-104: 削除(投稿者だけ)。論理削除: 本文を破棄し、deleted_at を設定する
+  app.delete<{ Params: { id: string } }>(
+    '/api/messages/:id',
+    { preHandler: requireAuthor(db) },
+    async (request, reply) => {
+      const current = messageOf(request);
+      // すでに削除されていれば(判定の後の、同時の削除)、404
+      const [deleted] = await db
+        .update(messages)
+        .set({ body: null, deletedAt: sql`now()` })
+        .where(and(eq(messages.id, current.id), isNull(messages.deletedAt)))
+        .returning({ id: messages.id });
+      if (!deleted) throw new AppError(404, 'not_found', '見つかりません。');
+
+      // 通知には、本文を含めない。トップレベルは message:deleted(自分の返信数)、
+      // 返信は thread:reply-deleted(親の返信数)。どちらか一方だけ送る
+      if (current.parentId === null) {
+        realtime.emit(chRoom(current.channelId), 'message:deleted', {
+          id: current.id,
+          channelId: current.channelId,
+          replyCount: await countReplies(db, current.id),
+        });
+      } else {
+        realtime.emit(chRoom(current.channelId), 'thread:reply-deleted', {
+          id: current.id,
+          channelId: current.channelId,
+          parentId: current.parentId,
+          replyCount: await countReplies(db, current.parentId),
+        });
+      }
+      return reply.status(204).send();
     },
   );
 }
