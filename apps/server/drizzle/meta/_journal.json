@@ -50,6 +50,13 @@
       "when": 1795862364466,
       "tag": "0006_clumsy_wolfpack",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795863360067,
+      "tag": "0007_puzzling_madrox",
+      "breakpoints": true
     }
   ]
 }

@@ -87,3 +87,15 @@ export interface MessagePageResponse {
   /** 次のページを取るための cursor。次のページがなければ null */
   nextCursor: number | null;
 }
+
+/**
+ * スレッドの返信の一覧(GET /messages/:id/replies)。古い順。
+ * 親は、削除済みなら、本文のない形(「削除されました」と表示して、返信は残す。FR-105)。
+ */
+export interface ReplyPageResponse {
+  parent: MessageListItem;
+  /** 古い順。削除済みの返信は含めない */
+  replies: MessageResponse[];
+  /** 次のページを取るための cursor(これより新しい返信を取る)。なければ null */
+  nextCursor: number | null;
+}

@@ -244,3 +244,21 @@ export const messages = pgTable(
       .where(sql`${t.parentId} IS NOT NULL`),
   ],
 );
+
+/**
+ * スレッドの参加者(FR-105)。親(トップレベル)ごとに、返信した人と、親の投稿者が入る。
+ * 既読位置は、スレッドの未読(フェーズ 5)で使う。
+ */
+export const threadMembers = pgTable(
+  'thread_members',
+  {
+    rootMessageId: bigint('root_message_id', { mode: 'number' })
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    lastReadMessageId: bigint('last_read_message_id', { mode: 'number' }).notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.rootMessageId, t.userId] })],
+);
