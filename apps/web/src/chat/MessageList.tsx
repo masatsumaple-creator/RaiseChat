@@ -87,8 +87,8 @@ export function MessageList({
     stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
   }
 
-  async function send(body: string) {
-    const message = await postMessage(channelId, body);
+  async function send(body: string, files: File[] = []) {
+    const message = await postMessage(channelId, body, files);
     // WebSocket が届かなくても、自分の投稿は見えるようにする(同じ ID は、重ねて加えない)
     queryClient.setQueryData<MessagesData>(messagesKey(channelId), (data) =>
       addMessage(data, message),
@@ -184,7 +184,7 @@ export function MessageList({
           )}
         </ul>
       </div>
-      <MessageComposer onSend={send} fetchCandidates={fetchCandidates} />
+      <MessageComposer onSend={send} fetchCandidates={fetchCandidates} allowAttachments />
     </div>
   );
 }
