@@ -15,6 +15,16 @@ import {
   updateAuthor,
   type MessagesData,
 } from './cache';
+import {
+  addReply,
+  applyReactionToReplies,
+  markParentDeleted,
+  removeReply,
+  replaceParent,
+  replaceReply,
+  updateReplyAuthor,
+  type RepliesData,
+} from './replies-cache';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -49,23 +59,42 @@ export function applyServerEvents(socket: Socket<ServerToClientEvents>, queryCli
     queryClient.setQueryData<MessagesData>(key, (data) => addMessage(data, message));
   });
   socket.on('message:updated', (message) => {
+    // スレッドのパネルに開いている親も、置き換える
+    queryClient.setQueriesData<RepliesData>({ queryKey: ['replies'] }, (data) =>
+      replaceParent(data, message),
+    );
     queryClient.setQueryData<MessagesData>(messagesKey(message.channelId), (data) =>
       replaceMessage(data, message),
     );
   });
   socket.on('message:deleted', ({ id, channelId, replyCount }) => {
+    queryClient.setQueriesData<RepliesData>({ queryKey: ['replies'] }, (data) =>
+      markParentDeleted(data, { id, replyCount }),
+    );
     queryClient.setQueryData<MessagesData>(messagesKey(channelId), (data) =>
       applyMessageDeleted(data, { id, replyCount }),
     );
   });
   socket.on('thread:reply-created', ({ reply, replyCount }) => {
     if (reply.parentId === null) return;
+    // 開いているスレッドのパネルにも、加える(冪等)
+    queryClient.setQueriesData<RepliesData>({ queryKey: ['replies'] }, (data) =>
+      addReply(data, reply, replyCount),
+    );
     queryClient.setQueryData<MessagesData>(messagesKey(reply.channelId), (data) =>
       setReplyCount(data, reply.parentId!, replyCount),
     );
   });
   // 返信は、一覧に出ない。親の返信数だけを更新する(返信の一覧は、スレッドの画面で扱う)
-  socket.on('thread:reply-deleted', ({ channelId, parentId, replyCount }) => {
+  socket.on('thread:reply-updated', (reply) => {
+    queryClient.setQueriesData<RepliesData>({ queryKey: ['replies'] }, (data) =>
+      replaceReply(data, reply),
+    );
+  });
+  socket.on('thread:reply-deleted', ({ id, channelId, parentId, replyCount }) => {
+    queryClient.setQueriesData<RepliesData>({ queryKey: ['replies'] }, (data) =>
+      removeReply(data, { id, parentId, replyCount }),
+    );
     queryClient.setQueryData<MessagesData>(messagesKey(channelId), (data) =>
       setReplyCount(data, parentId, replyCount),
     );
@@ -75,6 +104,9 @@ export function applyServerEvents(socket: Socket<ServerToClientEvents>, queryCli
     socket.on(event, (payload) => {
       queryClient.setQueryData<MessagesData>(messagesKey(payload.channelId), (data) =>
         applyReaction(data, payload),
+      );
+      queryClient.setQueriesData<RepliesData>({ queryKey: ['replies'] }, (data) =>
+        applyReactionToReplies(data, payload),
       );
     });
   }
@@ -105,6 +137,9 @@ export function applyServerEvents(socket: Socket<ServerToClientEvents>, queryCli
     queryClient.setQueriesData<MessagesData>({ queryKey: ['messages'] }, (data) =>
       updateAuthor(data, user),
     );
+    queryClient.setQueriesData<RepliesData>({ queryKey: ['replies'] }, (data) =>
+      updateReplyAuthor(data, user),
+    );
     void queryClient.invalidateQueries({ queryKey: ['workspaces'] });
     void queryClient.invalidateQueries({ queryKey: ['channel-members'] });
     void queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
@@ -121,6 +156,8 @@ export function resyncAfterReconnect(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: ['channel-members'] });
   queryClient.setQueriesData<MessagesData>({ queryKey: ['messages'] }, keepFirstPage);
   void queryClient.invalidateQueries({ queryKey: ['messages'] });
+  // 開いているスレッドのパネルは、返信を先頭から取り直す(設計書 §6.5)
+  void queryClient.invalidateQueries({ queryKey: ['replies'] });
 }
 
 /**

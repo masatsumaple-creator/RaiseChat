@@ -14,6 +14,7 @@ import { errorMessage } from '../api/client';
 import { useMe } from '../api/me';
 import { listMembers, membersKey } from '../api/workspaces';
 import { MessageList } from '../chat/MessageList';
+import { ThreadPanel } from '../chat/ThreadPanel';
 import { channelLabel } from './channel-label';
 import { useCurrentWorkspace } from './WorkspaceShell';
 
@@ -94,6 +95,8 @@ export function ChannelPage() {
   const workspace = useCurrentWorkspace();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // 開いているスレッドの親(チャンネルを移ると、閉じる)
+  const [thread, setThread] = useState<{ channelId: string; rootId: number } | null>(null);
 
   const channels = useQuery({
     queryKey: channelsKey(workspace.id),
@@ -134,7 +137,21 @@ export function ChannelPage() {
         {leave.isError && <p role="alert">{errorMessage(leave.error)}</p>}
       </header>
       <ParticipantsPanel key={channel.id} channel={channel} />
-      <MessageList key={channel.id} channelId={channel.id} />
+      <div className="channel-body">
+        <MessageList
+          key={channel.id}
+          channelId={channel.id}
+          onOpenThread={(rootId) => setThread({ channelId: channel.id, rootId })}
+        />
+        {thread?.channelId === channel.id && (
+          <ThreadPanel
+            key={thread.rootId}
+            channelId={channel.id}
+            rootId={thread.rootId}
+            onClose={() => setThread(null)}
+          />
+        )}
+      </div>
     </main>
   );
 }

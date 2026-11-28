@@ -220,7 +220,109 @@ describe('ChannelPage(FR-101, 203, 204)', () => {
       fireEvent.click(screen.getByRole('button', { name: '削除' }));
       fireEvent.click(screen.getByRole('button', { name: '削除する' }));
       await screen.findByText(/このメッセージは、削除されました。/);
-      expect(screen.getByText('(返信 2 件)')).toBeTruthy();
+      expect(screen.getByRole('button', { name: '返信 2 件' })).toBeTruthy();
+    });
+  });
+
+  describe('スレッドとリアクション(FR-105, 108)', () => {
+    const parentMsg = (extra: Partial<MessageResponse> = {}) => ({
+      ...message(1, '親の本文', 'u9'),
+      replyCount: 2,
+      ...extra,
+    });
+    const reply = (id: number, body: string, authorId = 'u9'): MessageResponse => ({
+      ...message(id, body, authorId),
+      parentId: 1,
+    });
+    const listApi = (...items: unknown[]) => ({
+      ...base,
+      'GET /api/channels/c1/messages': () => json(200, { messages: items, nextCursor: null }),
+    });
+
+    it('「返信 N 件」でスレッドのパネルを開き、親と返信(古い順)を表示する。閉じられる', async () => {
+      renderChannel('c1', {
+        ...listApi(parentMsg()),
+        'GET /api/messages/1/replies': () =>
+          json(200, {
+            parent: parentMsg(),
+            replies: [reply(2, '返信一'), reply(3, '返信二')],
+            nextCursor: null,
+          }),
+      });
+      fireEvent.click(await screen.findByRole('button', { name: '返信 2 件' }));
+      const panel = await screen.findByRole('complementary', { name: 'スレッド' });
+      const replies = await within(panel).findByRole('list', { name: '返信一覧' });
+      expect(
+        within(replies)
+          .getAllByRole('listitem')
+          .map((li) => li.textContent),
+      ).toEqual([expect.stringContaining('返信一'), expect.stringContaining('返信二')]);
+      expect(within(panel).getByText('親の本文')).toBeTruthy();
+      fireEvent.click(within(panel).getByRole('button', { name: '閉じる' }));
+      expect(screen.queryByRole('complementary', { name: 'スレッド' })).toBeNull();
+    });
+
+    it('返信を投稿すると、一覧に加わり、親の返信数が増える', async () => {
+      const api = renderChannel('c1', {
+        ...listApi(parentMsg()),
+        'GET /api/messages/1/replies': () =>
+          json(200, { parent: parentMsg(), replies: [reply(2, '返信一')], nextCursor: null }),
+        'POST /api/messages/1/replies': ({ body }) => {
+          expect(body).toEqual({ body: '新しい返信' });
+          return json(201, reply(4, '新しい返信', 'u1'));
+        },
+      });
+      fireEvent.click(await screen.findByRole('button', { name: '返信 2 件' }));
+      const panel = await screen.findByRole('complementary', { name: 'スレッド' });
+      await within(panel).findByText('返信一');
+      fireEvent.change(within(panel).getByLabelText('返信'), { target: { value: '新しい返信' } });
+      fireEvent.click(within(panel).getByRole('button', { name: '送信' }));
+      await within(within(panel).getByRole('list', { name: '返信一覧' })).findByText('新しい返信');
+      expect(within(panel).getByText('返信 3 件')).toBeTruthy();
+      expect(api.calls).toContain('POST /api/messages/1/replies');
+    });
+
+    it('親が削除済みなら、「削除されました」と表示して、返信は残る。返信の投稿欄は出ない', async () => {
+      const deletedParent = {
+        id: 1,
+        channelId: 'c1',
+        createdAt: '2026-01-01T09:00:00.000Z',
+        replyCount: 1,
+        deleted: true,
+      };
+      renderChannel('c1', {
+        ...listApi(deletedParent),
+        'GET /api/messages/1/replies': () =>
+          json(200, { parent: deletedParent, replies: [reply(2, '残った返信')], nextCursor: null }),
+      });
+      fireEvent.click(await screen.findByRole('button', { name: '返信 1 件' }));
+      const panel = await screen.findByRole('complementary', { name: 'スレッド' });
+      await within(panel).findByText('残った返信');
+      expect(within(panel).getByText(/このメッセージは、削除されました。/)).toBeTruthy();
+      expect(within(panel).queryByLabelText('返信')).toBeNull();
+    });
+
+    it('リアクションを付けると、件数が増え、自分のものは強調される。もう一度押すと解除される', async () => {
+      const calls: string[] = [];
+      renderChannel('c1', {
+        ...listApi({ ...message(1, '本文', 'u9'), replyCount: 0 }),
+        'PUT /api/messages/1/reactions/%F0%9F%9A%80': () => {
+          calls.push('PUT');
+          return json(200, { emoji: '🚀', count: 1, userIds: ['u1'] });
+        },
+        'DELETE /api/messages/1/reactions/%F0%9F%9A%80': () => {
+          calls.push('DELETE');
+          return new Response(null, { status: 204 });
+        },
+      });
+      await screen.findByText('本文');
+      fireEvent.click(screen.getByRole('button', { name: 'リアクションを追加' }));
+      fireEvent.click(screen.getByRole('button', { name: '🚀' }));
+      const chip = await screen.findByRole('button', { name: '🚀 1' });
+      expect(chip.getAttribute('aria-pressed')).toBe('true');
+      fireEvent.click(chip);
+      await waitFor(() => expect(screen.queryByRole('button', { name: '🚀 1' })).toBeNull());
+      expect(calls).toEqual(['PUT', 'DELETE']);
     });
   });
 

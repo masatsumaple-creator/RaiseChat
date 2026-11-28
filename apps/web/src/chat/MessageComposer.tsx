@@ -7,7 +7,14 @@ import { errorMessage } from '../api/client';
  * - 日本語入力の変換中の Enter(確定)では、送信しない
  * - 空白だけは、送らない。送信に成功したら、入力欄を空にする。失敗したら、入力を残して、エラーを示す
  */
-export function MessageComposer({ onSend }: { onSend: (body: string) => Promise<unknown> }) {
+export function MessageComposer({
+  onSend,
+  label = 'メッセージ',
+}: {
+  onSend: (body: string) => Promise<unknown>;
+  /** 入力欄の名前(同じ画面に、複数あるときに、見分けるため) */
+  label?: string;
+}) {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +49,7 @@ export function MessageComposer({ onSend }: { onSend: (body: string) => Promise<
   return (
     <form onSubmit={onSubmit} className="composer">
       <label>
-        メッセージ
+        {label}
         <textarea
           name="message"
           rows={2}
