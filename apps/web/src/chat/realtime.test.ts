@@ -3,8 +3,9 @@ import type { MessageResponse, ServerToClientEvents } from '@raisechat/shared';
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import type { Socket } from 'socket.io-client';
 import { describe, expect, it, vi } from 'vitest';
-import { channelsKey, messagesKey } from '../api/channels';
+import { channelsKey, messagesKey, repliesKey } from '../api/channels';
 import type { MessagesData } from './cache';
+import type { RepliesData } from './replies-cache';
 import { applyServerEvents, resyncAfterReconnect } from './realtime';
 
 function msg(id: number, authorId = 'u1'): MessageResponse {
@@ -201,6 +202,68 @@ describe('applyServerEvents: 編集・削除', () => {
     emit('thread:reply-deleted', { id: 9, channelId: 'c1', parentId: 5, replyCount: 4 });
     expect(read()[0]).toMatchObject({ id: 5, replyCount: 4 });
     expect(read().map((m) => m.id)).toEqual([5, 4]);
+  });
+});
+
+describe('applyServerEvents: スレッドのパネル(返信のキャッシュ)', () => {
+  function setupReplies() {
+    const client = new QueryClient();
+    const reply = (id: number) => ({ ...msg(id), parentId: 5 });
+    const initial: RepliesData = {
+      pages: [{ parent: { ...msg(5), replyCount: 1 }, replies: [reply(9)], nextCursor: null }],
+      pageParams: [undefined],
+    };
+    client.setQueryData(repliesKey(5), initial);
+    const { socket, emit } = fakeSocket();
+    applyServerEvents(socket, client);
+    const read = () => client.getQueryData<RepliesData>(repliesKey(5))!.pages[0]!;
+    return { emit, read, reply };
+  }
+
+  it('thread:reply-created: 返信を末尾に加え、親の返信数を更新する(重ねて届いても 1 件)', () => {
+    const { emit, read, reply } = setupReplies();
+    emit('thread:reply-created', { reply: reply(10), replyCount: 2 });
+    emit('thread:reply-created', { reply: reply(10), replyCount: 2 });
+    expect(read().replies.map((r) => r.id)).toEqual([9, 10]);
+    expect(read().parent.replyCount).toBe(2);
+  });
+
+  it('thread:reply-updated / thread:reply-deleted: 返信を置き換え、外し、返信数を更新する', () => {
+    const { emit, read, reply } = setupReplies();
+    emit('thread:reply-updated', { ...reply(9), body: '直した' });
+    expect(read().replies[0]!.body).toBe('直した');
+    emit('thread:reply-deleted', { id: 9, channelId: 'c1', parentId: 5, replyCount: 0 });
+    expect(read().replies).toEqual([]);
+    expect(read().parent.replyCount).toBe(0);
+  });
+
+  it('message:updated / message:deleted: 開いている親に反映する', () => {
+    const { emit, read } = setupReplies();
+    emit('message:updated', { ...msg(5), body: '親を直した', replyCount: 1 });
+    expect((read().parent as MessageResponse).body).toBe('親を直した');
+    emit('message:deleted', { id: 5, channelId: 'c1', replyCount: 1 });
+    expect(read().parent).toMatchObject({ id: 5, deleted: true, replyCount: 1 });
+  });
+
+  it('reaction:added: 返信のリアクションに反映する', () => {
+    const { emit, read } = setupReplies();
+    emit('reaction:added', {
+      messageId: 9,
+      channelId: 'c1',
+      emoji: '👍',
+      count: 1,
+      userIds: ['u2'],
+    });
+    expect(read().replies[0]!.reactions).toEqual([{ emoji: '👍', count: 1, userIds: ['u2'] }]);
+  });
+
+  it('再接続のあと: 開いているスレッドの返信を、取り直す対象にする', () => {
+    const { read } = setupReplies();
+    expect(read()).toBeDefined();
+    const client = new QueryClient();
+    client.setQueryData(repliesKey(5), { pages: [], pageParams: [] });
+    resyncAfterReconnect(client);
+    expect(client.getQueryState(repliesKey(5))!.isInvalidated).toBe(true);
   });
 });
 

@@ -92,3 +92,32 @@ td {
   gap: 0.5em;
   align-items: center;
 }
+
+.channel-body {
+  display: flex;
+  gap: 1em;
+}
+.channel-body > .chat {
+  flex: 1;
+  min-width: 0;
+}
+.thread-panel {
+  width: 24em;
+  border-left: 1px solid #ccc;
+  padding-left: 1em;
+}
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25em;
+  align-items: center;
+}
+.reaction-mine {
+  background: #dbeafe;
+  border-color: #3b82f6;
+  font-weight: bold;
+}
+.emoji-picker {
+  display: flex;
+  gap: 0.25em;
+}

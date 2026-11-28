@@ -4,6 +4,8 @@ import type {
   CreateChannelRequest,
   MessagePageResponse,
   MessageResponse,
+  ReactionSummary,
+  ReplyPageResponse,
 } from '@raisechat/shared';
 import { apiFetch } from './client';
 
@@ -12,6 +14,7 @@ export const channelsKey = (workspaceId: string) => ['channels', workspaceId] as
 export const joinableKey = (workspaceId: string) => ['channels', workspaceId, 'joinable'] as const;
 export const channelMembersKey = (channelId: string) => ['channel-members', channelId] as const;
 export const messagesKey = (channelId: string) => ['messages', channelId] as const;
+export const repliesKey = (rootId: number) => ['replies', rootId] as const;
 
 export const listChannels = (workspaceId: string, signal?: AbortSignal) =>
   apiFetch<ChannelResponse[]>(`/api/workspaces/${workspaceId}/channels`, { signal });
@@ -58,3 +61,25 @@ export const editMessage = (messageId: number, body: string) =>
 /** 自分のメッセージの削除(FR-104。論理削除) */
 export const deleteMessage = (messageId: number) =>
   apiFetch<void>(`/api/messages/${messageId}`, { method: 'DELETE' });
+
+/** スレッドの返信(古い順に 50 件ずつ)と親。cursor は、前のページの最後の ID */
+export const listReplies = (rootId: number, cursor: number | undefined, signal?: AbortSignal) =>
+  apiFetch<ReplyPageResponse>(
+    `/api/messages/${rootId}/replies${cursor === undefined ? '' : `?cursor=${cursor}`}`,
+    { signal },
+  );
+
+export const postReply = (rootId: number, body: string) =>
+  apiFetch<MessageResponse>(`/api/messages/${rootId}/replies`, { method: 'POST', json: { body } });
+
+/** リアクションの付与(冪等)。その絵文字の、いまの状態が返る */
+export const addReaction = (messageId: number, emoji: string) =>
+  apiFetch<ReactionSummary>(`/api/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`, {
+    method: 'PUT',
+  });
+
+/** リアクションの解除(冪等) */
+export const removeReaction = (messageId: number, emoji: string) =>
+  apiFetch<void>(`/api/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`, {
+    method: 'DELETE',
+  });

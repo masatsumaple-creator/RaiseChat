@@ -63,7 +63,10 @@ test('マークダウンの整形・XSS の無害化・編集・削除が、相�
   await expect(messagesOf(guest).getByText('直す前')).toBeVisible();
   // 相手のメッセージには、編集・削除の操作が出ない
   await expect(
-    messagesOf(guest).getByRole('listitem').filter({ hasText: '直す前' }).getByRole('button'),
+    messagesOf(guest)
+      .getByRole('listitem')
+      .filter({ hasText: '直す前' })
+      .getByRole('button', { name: /^(編集|削除)$/ }),
   ).toHaveCount(0);
   const mine = messagesOf(owner).getByRole('listitem').filter({ hasText: '直す前' });
   await mine.getByRole('button', { name: '編集' }).click();
