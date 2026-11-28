@@ -129,14 +129,14 @@ export function ChannelPage() {
     <main className="channel">
       <header className="channel-header">
         <h2>{channelLabel(channel)}</h2>
-        {!channel.isDefault && (
+        {!channel.isDefault && channel.type !== 'dm' && (
           <button type="button" disabled={leave.isPending} onClick={() => leave.mutate()}>
             退出
           </button>
         )}
         {leave.isError && <p role="alert">{errorMessage(leave.error)}</p>}
       </header>
-      <ParticipantsPanel key={channel.id} channel={channel} />
+      {channel.type !== 'dm' && <ParticipantsPanel key={channel.id} channel={channel} />}
       <div className="channel-body">
         <MessageList
           key={channel.id}

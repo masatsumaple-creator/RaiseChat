@@ -35,8 +35,18 @@ export const joinChannel = (channelId: string) =>
 export const leaveChannel = (channelId: string) =>
   apiFetch<void>(`/api/channels/${channelId}/leave`, { method: 'POST' });
 
-export const listChannelMembers = (channelId: string, signal?: AbortSignal) =>
-  apiFetch<ChannelMemberResponse[]>(`/api/channels/${channelId}/members`, { signal });
+/** q があれば、ユーザー名・表示名の前方一致で絞る(メンション候補。FR-109) */
+export const listChannelMembers = (channelId: string, signal?: AbortSignal, q?: string) =>
+  apiFetch<ChannelMemberResponse[]>(
+    `/api/channels/${channelId}/members${q ? `?q=${encodeURIComponent(q)}` : ''}`,
+    { signal },
+  );
+
+export const createDm = (workspaceId: string, userId: string) =>
+  apiFetch<ChannelResponse>(`/api/workspaces/${workspaceId}/dms`, {
+    method: 'POST',
+    json: { userId },
+  });
 
 export const addChannelMember = (channelId: string, userId: string) =>
   apiFetch<void>(`/api/channels/${channelId}/members`, { method: 'POST', json: { userId } });

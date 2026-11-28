@@ -9,6 +9,12 @@ describe('loadConfig', () => {
     expect(config.allowedOrigins).toEqual(['http://localhost:5173']);
     expect(config.trustedProxies).toEqual([]);
     expect(config.isProduction).toBe(false);
+    expect(config.registerRateLimit).toBe(10);
+  });
+
+  it('登録の回数の上限は、環境変数で変えられる(E2E 用)。1 未満は、エラー', () => {
+    expect(loadConfig({ REGISTER_RATE_LIMIT: '1000' }).registerRateLimit).toBe(1000);
+    expect(() => loadConfig({ REGISTER_RATE_LIMIT: '0' })).toThrow();
   });
 
   it('許可するオリジンは、カンマ区切りで複数指定でき、正規化される', () => {

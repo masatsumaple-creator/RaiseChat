@@ -13,36 +13,58 @@ export function ChannelNav({
   currentChannelId: string | undefined;
 }) {
   const base = `/w/${workspace.id}`;
+  const dms = channels.filter((c) => c.type === 'dm');
   return (
-    <nav aria-label="チャンネル">
-      <ul>
-        {channels.map((c) => (
-          <li key={c.id}>
-            <Link
-              to={`${base}/c/${c.id}`}
-              aria-current={c.id === currentChannelId ? 'page' : undefined}
-            >
-              {channelLabel(c)}
-            </Link>
-          </li>
-        ))}
-      </ul>
-      <ul>
-        <li>
-          <Link to={`${base}/channels/new`}>チャンネルを作成</Link>
-        </li>
-        <li>
-          <Link to={`${base}/channels/browse`}>チャンネルを探す</Link>
-        </li>
-        <li>
-          <Link to={`${base}/members`}>メンバー</Link>
-        </li>
-        {workspace.role === 'owner' && (
+    <>
+      <nav aria-label="チャンネル">
+        <ul>
+          {channels
+            .filter((c) => c.type !== 'dm')
+            .map((c) => (
+              <li key={c.id}>
+                <Link
+                  to={`${base}/c/${c.id}`}
+                  aria-current={c.id === currentChannelId ? 'page' : undefined}
+                >
+                  {channelLabel(c)}
+                </Link>
+              </li>
+            ))}
+        </ul>
+        <ul>
           <li>
-            <Link to={`${base}/invitations`}>招待リンクの管理</Link>
+            <Link to={`${base}/channels/new`}>チャンネルを作成</Link>
           </li>
-        )}
-      </ul>
-    </nav>
+          <li>
+            <Link to={`${base}/channels/browse`}>チャンネルを探す</Link>
+          </li>
+          <li>
+            <Link to={`${base}/members`}>メンバー</Link>
+          </li>
+          {workspace.role === 'owner' && (
+            <li>
+              <Link to={`${base}/invitations`}>招待リンクの管理</Link>
+            </li>
+          )}
+        </ul>
+      </nav>
+      <nav aria-label="ダイレクトメッセージ">
+        <ul>
+          {dms.map((c) => (
+            <li key={c.id}>
+              <Link
+                to={`${base}/c/${c.id}`}
+                aria-current={c.id === currentChannelId ? 'page' : undefined}
+              >
+                {channelLabel(c)}
+              </Link>
+            </li>
+          ))}
+          <li>
+            <Link to={`${base}/dms/new`}>DM を始める</Link>
+          </li>
+        </ul>
+      </nav>
+    </>
   );
 }

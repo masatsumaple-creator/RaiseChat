@@ -110,8 +110,8 @@ export function buildApp({
     db,
     config,
     realtime,
-    // 登録は、同じ接続元から、15 分に 10 回まで(設計書 §4.1。回数は T5 で決めた)
-    registerLimiter: new RateLimiter({ limit: 10, windowMs: 15 * 60 * 1000 }),
+    // 登録は、同じ接続元から、15 分に 10 回まで(設計書 §4.1。回数は T5 で決めた。E2E だけ、環境変数で引き上げる)
+    registerLimiter: new RateLimiter({ limit: config.registerRateLimit, windowMs: 15 * 60 * 1000 }),
     // ログインは、同じ接続元とユーザー名の組で 15 分に 5 回、同じ接続元全体で 15 分に 30 回まで(FR-005 と同じ基準)
     loginPairLimiter: new RateLimiter({ limit: 5, windowMs: 15 * 60 * 1000 }),
     loginIpLimiter: new RateLimiter({ limit: 30, windowMs: 15 * 60 * 1000 }),

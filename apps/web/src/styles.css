@@ -121,3 +121,24 @@ td {
   display: flex;
   gap: 0.25em;
 }
+
+.mention {
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 3px;
+  padding: 0 0.2em;
+}
+.mention-candidates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #ccc;
+  background: #fff;
+}
+.mention-candidates li {
+  padding: 0.25em 0.5em;
+  cursor: pointer;
+}
+.mention-candidates li.active {
+  background: #dbeafe;
+}

@@ -29,6 +29,8 @@ await runMigrations(e2eUrl.toString());
 
 process.env.DATABASE_URL = e2eUrl.toString();
 process.env.PORT ??= '3100';
+// E2E は、同じ接続元から、多くのユーザーを登録するため、登録の回数の上限を引き上げる
+process.env.REGISTER_RATE_LIMIT ??= '1000';
 process.env.ALLOWED_ORIGIN ??= 'http://localhost:5273';
 process.env.STORAGE_DIR = await mkdtemp(join(tmpdir(), 'raisechat-e2e-'));
 

@@ -13,7 +13,7 @@ import { errorMessage } from '../api/client';
 import { useMe } from '../api/me';
 import { MessageComposer } from './MessageComposer';
 import { MessageItem } from './MessageItem';
-import { useChannelNames } from './MessageList';
+import { useCandidates, useChannelNames } from './MessageList';
 import {
   addReply,
   allReplies,
@@ -40,6 +40,7 @@ export function ThreadPanel({
   const queryClient = useQueryClient();
   const { data: me } = useMe();
   const names = useChannelNames(channelId);
+  const fetchCandidates = useCandidates(channelId);
   const key = repliesKey(rootId);
   const query = useInfiniteQuery({
     queryKey: key,
@@ -159,7 +160,9 @@ export function ThreadPanel({
               続きの返信を読み込む
             </button>
           )}
-          {!parent.deleted && <MessageComposer onSend={send} label="返信" />}
+          {!parent.deleted && (
+            <MessageComposer onSend={send} label="返信" fetchCandidates={fetchCandidates} />
+          )}
         </>
       )}
     </aside>
