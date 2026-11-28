@@ -8,6 +8,7 @@ import { RateLimiter } from './rate-limit';
 import { registerAuthRoutes } from './routes/auth';
 import { registerChannelRoutes } from './routes/channels';
 import { registerInvitationRoutes } from './routes/invitations';
+import { registerMessageRoutes } from './routes/messages';
 import { registerProfileRoutes } from './routes/profile';
 import { registerWorkspaceRoutes } from './routes/workspaces';
 import { processStorageDeletions } from './storage/deletion-queue';
@@ -105,6 +106,7 @@ export function buildApp({
 
   registerWorkspaceRoutes(app, { db });
   registerChannelRoutes(app, { db });
+  registerMessageRoutes(app, { db });
   registerInvitationRoutes(app, {
     db,
     // 無効なトークンの試行だけを数える。ユーザー単位で 15 分に 10 回、接続元の全体で 15 分に 30 回まで(設計書 §4.1)
