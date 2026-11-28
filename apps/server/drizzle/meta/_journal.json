@@ -78,6 +78,13 @@
       "when": 1795868535324,
       "tag": "0010_windy_triton",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795870304004,
+      "tag": "0011_search_trgm_index",
+      "breakpoints": true
     }
   ]
 }
