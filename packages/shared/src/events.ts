@@ -1,5 +1,6 @@
 import type { ChannelMemberResponse, ChannelResponse } from './channel';
 import type { ReactionSummary } from './emoji';
+import type { MentionCreatedPayload } from './mention';
 import type { MessageResponse } from './message';
 import type { MemberResponse, WorkspaceResponse } from './workspace';
 
@@ -45,6 +46,8 @@ export interface ServerToClientEvents {
     parentId: number;
     replyCount: number;
   }) => void;
+  /** メンションされた人にだけ届く(user ルーム)。投稿・編集で、新しく加わった人のみ */
+  'mention:created': (payload: MentionCreatedPayload) => void;
   'workspace:added': (workspace: WorkspaceResponse) => void;
   'member:joined': (payload: { workspaceId: string; member: MemberResponse }) => void;
   'channel:created': (channel: ChannelResponse) => void;

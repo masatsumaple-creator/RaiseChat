@@ -23,6 +23,7 @@ function msg(id: number, authorId = 'u1', body = `m${id}`): MessageResponse {
     editedAt: null,
     replyCount: 0,
     reactions: [],
+    mentions: [],
     deleted: false,
   };
 }

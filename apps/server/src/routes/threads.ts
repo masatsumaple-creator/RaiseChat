@@ -13,6 +13,7 @@ import { requireMessageChannel, targetMessageOf } from '../auth/message-guards';
 import type { Db } from '../db/client';
 import { messages, threadMembers, users } from '../db/schema';
 import { AppError, parseWith } from '../errors';
+import { loadMentions, notifyMentions, syncMentions } from '../messages/mentions';
 import { loadReactions } from '../messages/reactions';
 import { chRoom, type Realtime } from '../realtime/realtime';
 import { channelLockKey, countReplies, toMessageResponse } from './messages';
@@ -45,7 +46,7 @@ export function registerThreadRoutes(app: FastifyInstance, deps: ThreadRouteDeps
       const { body } = parseWith(postMessageSchema, request.body);
       const me = authOf(request).user;
 
-      const { row, replyCount } = await db.transaction(async (tx) => {
+      const { row, replyCount, synced } = await db.transaction(async (tx) => {
         // 同じチャンネルの採番を、コミットの順に一致させる(設計書 §1.1。トップレベルの投稿と同じロック)
         await tx.execute(sql`SELECT pg_advisory_xact_lock(${channelLockKey(target.channelId)})`);
         // 親を共有ロックして、削除済みでないことを確かめる。同時に親が削除されても、
@@ -76,15 +77,22 @@ export function registerThreadRoutes(app: FastifyInstance, deps: ThreadRouteDeps
           .select({ n: sql<number>`count(*)::int` })
           .from(messages)
           .where(and(eq(messages.parentId, target.id), isNull(messages.deletedAt)));
-        return { row: inserted!, replyCount: count?.n ?? 0 };
+        const synced = await syncMentions(tx, {
+          id: inserted!.id,
+          channelId: target.channelId,
+          authorId: me.id,
+          body,
+        });
+        return { row: inserted!, replyCount: count?.n ?? 0, synced };
       });
 
-      const response = toMessageResponse({ ...row, body }, me, 0, []);
+      const response = toMessageResponse({ ...row, body }, me, 0, [], synced.mentions);
       // コミットの後に、チャンネルの参加者へ通知する(トップレベルの message:created は、送らない)
       realtime.emit(chRoom(target.channelId), 'thread:reply-created', {
         reply: response,
         replyCount,
       });
+      notifyMentions(realtime, synced, response);
       return reply.status(201).send(response);
     },
   );
@@ -133,8 +141,18 @@ export function registerThreadRoutes(app: FastifyInstance, deps: ThreadRouteDeps
         ...page.map((r) => r.id),
         ...(target.deletedAt === null ? [target.id] : []),
       ]);
+      const mentionsById = await loadMentions(db, [
+        ...page.map((r) => r.id),
+        ...(target.deletedAt === null ? [target.id] : []),
+      ]);
       const replies = page.map((r) =>
-        toMessageResponse({ ...r, body: r.body ?? '' }, r.author, 0, reactionsById.get(r.id) ?? []),
+        toMessageResponse(
+          { ...r, body: r.body ?? '' },
+          r.author,
+          0,
+          reactionsById.get(r.id) ?? [],
+          mentionsById.get(r.id) ?? [],
+        ),
       );
 
       const replyCount = await countReplies(db, target.id);
@@ -163,6 +181,7 @@ export function registerThreadRoutes(app: FastifyInstance, deps: ThreadRouteDeps
           author!,
           replyCount,
           reactionsById.get(target.id) ?? [],
+          mentionsById.get(target.id) ?? [],
         );
       }
 

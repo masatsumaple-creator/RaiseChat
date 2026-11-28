@@ -47,6 +47,8 @@ export type {
   ServerToClientEvents,
   UserUpdatedPayload,
 } from './events';
+export { extractMentionNames } from './mention';
+export type { MentionCreatedPayload, MentionResponse } from './mention';
 export { EMOJI_MAX_CODE_POINTS, MAX_REACTION_KINDS_PER_MESSAGE, isSingleEmoji } from './emoji';
 export type { ReactionSummary } from './emoji';
 export { createInvitationSchema } from './invitation';
