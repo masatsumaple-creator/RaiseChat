@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { errorMessage } from '../api/client';
+import { addFiles, ATTACHMENT_ACCEPT, formatSize } from './attachment-rules';
 import { applyMention, findMentionQuery } from './mention-text';
 
 /**
@@ -16,6 +17,8 @@ import { applyMention, findMentionQuery } from './mention-text';
  * - Enter で送信、Shift+Enter で改行
  * - 日本語入力の変換中の Enter(確定)では、送信しない
  * - 空白だけは、送らない。送信に成功したら、入力欄を空にする。失敗したら、入力を残して、エラーを示す
+ * - allowAttachments なら、ファイル(画像・動画。5 つまで)を添付できる(FR-107)。選んだファイルは、一覧に出て、取り消せる。
+ *   形式・サイズ・数は、選んだときに確認して、外れたものは加えず、理由を示す(サーバーの検証が正で、これは補助)
  * - fetchCandidates があれば、アットマークの後ろで、そのチャンネルの参加者を候補に出して、補完する(FR-109)。
  *   候補が開いている間は、↑↓ で選び、Enter か Tab で確定し、Escape で閉じる(Enter は、送信しない)。
  *   変換中は、候補の操作をしない
@@ -24,14 +27,19 @@ export function MessageComposer({
   onSend,
   label = 'メッセージ',
   fetchCandidates,
+  allowAttachments = false,
 }: {
-  onSend: (body: string) => Promise<unknown>;
+  onSend: (body: string, files?: File[]) => Promise<unknown>;
   /** 入力欄の名前(同じ画面に、複数あるときに、見分けるため) */
   label?: string;
   /** メンションの候補を取る(q は、アットマークの後ろの文字列。ユーザー名・表示名の前方一致) */
   fetchCandidates?: (q: string) => Promise<ChannelMemberResponse[]>;
+  /** ファイルの添付を、できるようにする(トップレベルの投稿だけ) */
+  allowAttachments?: boolean;
 }) {
   const [body, setBody] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const [fileErrors, setFileErrors] = useState<string[]>([]);
   const [caret, setCaret] = useState(0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,8 +89,10 @@ export function MessageComposer({
     setSending(true);
     setError(null);
     try {
-      await onSend(body);
+      await (allowAttachments ? onSend(body, files) : onSend(body));
       setBody('');
+      setFiles([]);
+      setFileErrors([]);
       setCaret(0);
       setDismissedAt(null);
     } catch (e) {
@@ -100,6 +110,15 @@ export function MessageComposer({
     setCaret(next.caret);
     setCandidates([]);
     textarea.current?.focus();
+  }
+
+  function onPick(event: ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(event.target.files ?? []);
+    // 同じファイルを、続けて選べるよう、選択を空にする
+    event.target.value = '';
+    const result = addFiles(files, picked);
+    setFiles(result.files);
+    setFileErrors(result.errors);
   }
 
   function onSubmit(event: FormEvent) {
@@ -155,6 +174,37 @@ export function MessageComposer({
           aria-expanded={fetchCandidates ? open : undefined}
         />
       </label>
+      {allowAttachments && (
+        <div className="composer-files">
+          <label>
+            ファイルを添付
+            <input type="file" multiple accept={ATTACHMENT_ACCEPT} onChange={onPick} />
+          </label>
+          {files.length > 0 && (
+            <ul aria-label="添付するファイル">
+              {files.map((f, i) => (
+                <li key={`${f.name}-${i}`}>
+                  {f.name}({formatSize(f.size)})
+                  <button
+                    type="button"
+                    aria-label={`${f.name} を取り消す`}
+                    onClick={() => setFiles((list) => list.filter((_, j) => j !== i))}
+                  >
+                    取り消し
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {fileErrors.length > 0 && (
+            <ul role="alert" aria-label="添付できなかったファイル">
+              {fileErrors.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {open && (
         <ul role="listbox" aria-label="メンションの候補" className="mention-candidates">
           {candidates.map((m, i) => (

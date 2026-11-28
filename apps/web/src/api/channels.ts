@@ -58,11 +58,22 @@ export const listMessages = (channelId: string, cursor: number | undefined, sign
     { signal },
   );
 
-export const postMessage = (channelId: string, body: string) =>
-  apiFetch<MessageResponse>(`/api/channels/${channelId}/messages`, {
+/** 投稿。添付があれば、multipart(body と files)で送る(FR-107) */
+export const postMessage = (channelId: string, body: string, files: File[] = []) => {
+  if (files.length === 0) {
+    return apiFetch<MessageResponse>(`/api/channels/${channelId}/messages`, {
+      method: 'POST',
+      json: { body },
+    });
+  }
+  const formData = new FormData();
+  formData.append('body', body);
+  for (const file of files) formData.append('files', file);
+  return apiFetch<MessageResponse>(`/api/channels/${channelId}/messages`, {
     method: 'POST',
-    json: { body },
+    formData,
   });
+};
 
 /** 自分のメッセージの編集(FR-103) */
 export const editMessage = (messageId: number, body: string) =>

@@ -1,6 +1,7 @@
 import type { MessageResponse } from '@raisechat/shared';
 import { useState } from 'react';
 import { errorMessage } from '../api/client';
+import { Attachments } from './Attachments';
 import { Markdown } from './Markdown';
 import { MessageEditor } from './MessageEditor';
 import { ReactionBar } from './ReactionBar';
@@ -65,6 +66,7 @@ export function MessageItem({
       ) : (
         <Markdown mentions={m.mentions.map((x) => x.username)}>{m.body}</Markdown>
       )}
+      <Attachments attachments={m.attachments} />
       <ReactionBar reactions={m.reactions} myId={myId} names={names} onToggle={onToggleReaction} />
       {onOpenThread && (
         <button type="button" className="reply-count" onClick={onOpenThread}>
