@@ -13,6 +13,7 @@ import { requireMessageChannel, targetMessageOf } from '../auth/message-guards';
 import type { Db } from '../db/client';
 import { messages, threadMembers, users } from '../db/schema';
 import { AppError, parseWith } from '../errors';
+import { loadReactions } from '../messages/reactions';
 import { chRoom, type Realtime } from '../realtime/realtime';
 import { channelLockKey, countReplies, toMessageResponse } from './messages';
 
@@ -78,7 +79,7 @@ export function registerThreadRoutes(app: FastifyInstance, deps: ThreadRouteDeps
         return { row: inserted!, replyCount: count?.n ?? 0 };
       });
 
-      const response = toMessageResponse({ ...row, body }, me, 0);
+      const response = toMessageResponse({ ...row, body }, me, 0, []);
       // コミットの後に、チャンネルの参加者へ通知する(トップレベルの message:created は、送らない)
       realtime.emit(chRoom(target.channelId), 'thread:reply-created', {
         reply: response,
@@ -128,7 +129,13 @@ export function registerThreadRoutes(app: FastifyInstance, deps: ThreadRouteDeps
         // 次のページがあるかを知るため、1 件多く取る
         .limit(MESSAGE_PAGE_SIZE + 1);
       const page = rows.slice(0, MESSAGE_PAGE_SIZE);
-      const replies = page.map((r) => toMessageResponse({ ...r, body: r.body ?? '' }, r.author, 0));
+      const reactionsById = await loadReactions(db, [
+        ...page.map((r) => r.id),
+        ...(target.deletedAt === null ? [target.id] : []),
+      ]);
+      const replies = page.map((r) =>
+        toMessageResponse({ ...r, body: r.body ?? '' }, r.author, 0, reactionsById.get(r.id) ?? []),
+      );
 
       const replyCount = await countReplies(db, target.id);
       let parent: ReplyPageResponse['parent'];
@@ -151,7 +158,12 @@ export function registerThreadRoutes(app: FastifyInstance, deps: ThreadRouteDeps
           })
           .from(users)
           .where(eq(users.id, target.userId));
-        parent = toMessageResponse({ ...target, body: target.body }, author!, replyCount);
+        parent = toMessageResponse(
+          { ...target, body: target.body },
+          author!,
+          replyCount,
+          reactionsById.get(target.id) ?? [],
+        );
       }
 
       return {

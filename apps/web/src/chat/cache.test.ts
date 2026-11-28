@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addMessage,
   applyMessageDeleted,
+  applyReaction,
   keepFirstPage,
   replaceMessage,
   setReplyCount,
@@ -21,6 +22,7 @@ function msg(id: number, authorId = 'u1', body = `m${id}`): MessageResponse {
     parentId: null,
     editedAt: null,
     replyCount: 0,
+    reactions: [],
     deleted: false,
   };
 }
@@ -176,5 +178,50 @@ describe('setReplyCount(thread:reply-deleted)', () => {
   it('変化がなければ、同じオブジェクトを返す', () => {
     const d = data();
     expect(setReplyCount(d, 4, 0)).toBe(d);
+  });
+});
+
+describe('applyReaction(reaction:added / reaction:removed)', () => {
+  const state = (emoji: string, userIds: string[]) => ({
+    messageId: 4,
+    channelId: 'c1',
+    emoji,
+    count: userIds.length,
+    userIds,
+  });
+  const reactionsOf = (d: MessagesData | undefined, id: number) =>
+    (d!.pages[0]!.messages.find((m) => m.id === id) as MessageResponse).reactions;
+
+  it('新しい絵文字は、末尾に加わる。すでにある絵文字は、位置を変えず、状態で置き換える', () => {
+    let d = applyReaction(data(), state('👍', ['u1']))!;
+    d = applyReaction(d, state('❤️', ['u2']))!;
+    expect(reactionsOf(d, 4).map((r) => r.emoji)).toEqual(['👍', '❤️']);
+    d = applyReaction(d, state('👍', ['u1', 'u3']))!;
+    expect(reactionsOf(d, 4)).toEqual([
+      { emoji: '👍', count: 2, userIds: ['u1', 'u3'] },
+      { emoji: '❤️', count: 1, userIds: ['u2'] },
+    ]);
+  });
+
+  it('件数が 0 なら、その絵文字を外す。ない絵文字の解除は、何もしない', () => {
+    let d = applyReaction(data(), state('👍', ['u1']))!;
+    const removed = applyReaction(d, state('👍', []))!;
+    expect(reactionsOf(removed, 4)).toEqual([]);
+    d = removed;
+    expect(applyReaction(d, state('👍', []))).toBe(d);
+  });
+
+  it('同じ状態が重ねて届いても、同じ結果(冪等)。一覧にないメッセージには、何もしない', () => {
+    const once = applyReaction(data(), state('👍', ['u1']))!;
+    const twice = applyReaction(once, state('👍', ['u1']))!;
+    expect(reactionsOf(twice, 4)).toEqual(reactionsOf(once, 4));
+    const d = data();
+    expect(applyReaction(d, { ...state('👍', ['u1']), messageId: 99 })).toBe(d);
+    expect(applyReaction(undefined, state('👍', ['u1']))).toBeUndefined();
+  });
+
+  it('削除済みの親には、何もしない', () => {
+    const deleted = applyMessageDeleted(data(), { id: 4, replyCount: 1 })!;
+    expect(applyReaction(deleted, state('👍', ['u1']))).toBe(deleted);
   });
 });

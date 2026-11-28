@@ -6,6 +6,7 @@ import {
   type MessageListItem,
   type MessagePageResponse,
   type MessageResponse,
+  type ReactionSummary,
 } from '@raisechat/shared';
 import { and, desc, eq, isNull, lt, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -13,8 +14,9 @@ import { channelOf, requireChannel } from '../auth/channel-guards';
 import { authOf } from '../auth/guards';
 import { messageOf, requireAuthor } from '../auth/message-guards';
 import type { Db } from '../db/client';
-import { messages, users } from '../db/schema';
+import { messages, reactions, users } from '../db/schema';
 import { AppError, parseWith } from '../errors';
+import { loadReactions, reactionsOf } from '../messages/reactions';
 import { avatarUrlFor } from '../profile/avatar';
 import { chRoom, type Realtime } from '../realtime/realtime';
 
@@ -44,6 +46,7 @@ export function toMessageResponse(
   row: MessageRow,
   author: AuthorRow,
   replyCount: number,
+  reactions: ReactionSummary[],
 ): MessageResponse {
   return {
     id: row.id,
@@ -59,6 +62,7 @@ export function toMessageResponse(
     createdAt: row.createdAt.toISOString(),
     editedAt: row.editedAt?.toISOString() ?? null,
     replyCount,
+    reactions,
     deleted: false,
   };
 }
@@ -103,7 +107,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
           .returning();
         return inserted!;
       });
-      const response = toMessageResponse({ ...row, body }, me, 0);
+      const response = toMessageResponse({ ...row, body }, me, 0, []);
       // コミットの後に、チャンネルの参加者へ通知する(設計書 §6.4)
       realtime.emit(chRoom(channelId), 'message:created', response);
       return reply.status(201).send(response);
@@ -151,6 +155,10 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
 
       const page = rows.slice(0, MESSAGE_PAGE_SIZE);
       const hasMore = rows.length > MESSAGE_PAGE_SIZE;
+      const reactionsById = await loadReactions(
+        db,
+        page.filter((r) => r.deletedAt === null).map((r) => r.id),
+      );
       const items: MessageListItem[] = page.map((r) => {
         if (r.deletedAt !== null || r.body === null) {
           const deleted: DeletedMessageResponse = {
@@ -162,7 +170,12 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
           };
           return deleted;
         }
-        return toMessageResponse({ ...r, body: r.body }, r.author, r.replyCount);
+        return toMessageResponse(
+          { ...r, body: r.body },
+          r.author,
+          r.replyCount,
+          reactionsById.get(r.id) ?? [],
+        );
       });
       return { messages: items, nextCursor: hasMore ? page[page.length - 1]!.id : null };
     },
@@ -184,7 +197,12 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       };
 
       if (body === current.body) {
-        return toMessageResponse(current, author, await countReplies(db, current.id));
+        return toMessageResponse(
+          current,
+          author,
+          await countReplies(db, current.id),
+          await reactionsOf(db, current.id),
+        );
       }
 
       // 削除済みでないときだけ更新する(判定の後に、削除された場合も、矛盾を残さない)
@@ -199,6 +217,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
         { ...updated, body },
         author,
         await countReplies(db, updated.id),
+        await reactionsOf(db, updated.id),
       );
       // トップレベルは message:updated、返信は thread:reply-updated(どちらか一方だけ送る。設計書 §10 の T17)
       if (response.parentId === null) {
@@ -217,11 +236,17 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
     async (request, reply) => {
       const current = messageOf(request);
       // すでに削除されていれば(判定の後の、同時の削除)、404
-      const [deleted] = await db
-        .update(messages)
-        .set({ body: null, deletedAt: sql`now()` })
-        .where(and(eq(messages.id, current.id), isNull(messages.deletedAt)))
-        .returning({ id: messages.id });
+      // 同じトランザクションで、リアクションも無効にする(FR-104。設計書 §2.1)
+      const deleted = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .update(messages)
+          .set({ body: null, deletedAt: sql`now()` })
+          .where(and(eq(messages.id, current.id), isNull(messages.deletedAt)))
+          .returning({ id: messages.id });
+        if (!row) return false;
+        await tx.delete(reactions).where(eq(reactions.messageId, current.id));
+        return true;
+      });
       if (!deleted) throw new AppError(404, 'not_found', '見つかりません。');
 
       // 通知には、本文を含めない。トップレベルは message:deleted(自分の返信数)、

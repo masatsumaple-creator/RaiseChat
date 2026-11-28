@@ -177,6 +177,7 @@ describe('POST /api/messages/:id/replies(FR-105)', () => {
       createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
       editedAt: null,
       replyCount: 0,
+      reactions: [],
       deleted: false,
     });
     expect(await row(res.json().id)).toMatchObject({ parentId: parent.id, channelId: ch });

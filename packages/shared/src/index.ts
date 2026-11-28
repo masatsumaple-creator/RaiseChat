@@ -41,7 +41,14 @@ export type {
   PostMessageRequest,
   ReplyPageResponse,
 } from './message';
-export type { ClientToServerEvents, ServerToClientEvents, UserUpdatedPayload } from './events';
+export type {
+  ClientToServerEvents,
+  ReactionEventPayload,
+  ServerToClientEvents,
+  UserUpdatedPayload,
+} from './events';
+export { EMOJI_MAX_CODE_POINTS, MAX_REACTION_KINDS_PER_MESSAGE, isSingleEmoji } from './emoji';
+export type { ReactionSummary } from './emoji';
 export { createInvitationSchema } from './invitation';
 export type {
   CreateInvitationRequest,

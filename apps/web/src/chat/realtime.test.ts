@@ -17,6 +17,7 @@ function msg(id: number, authorId = 'u1'): MessageResponse {
     parentId: null,
     editedAt: null,
     replyCount: 0,
+    reactions: [],
     deleted: false,
   };
 }
@@ -160,6 +161,31 @@ describe('applyServerEvents: 編集・削除', () => {
     expect(read()[0]).toMatchObject({ id: 5, deleted: true, replyCount: 2 });
     emit('message:deleted', { id: 4, channelId: 'c1', replyCount: 0 });
     expect(read().map((m) => m.id)).toEqual([5]);
+  });
+
+  it('reaction:added / reaction:removed: リアクションの状態を反映する', () => {
+    const { emit, read } = setup();
+    emit('reaction:added', {
+      messageId: 5,
+      channelId: 'c1',
+      emoji: '👍',
+      count: 2,
+      userIds: ['u1', 'u2'],
+    });
+    expect(read()[0]).toMatchObject({
+      id: 5,
+      reactions: [{ emoji: '👍', count: 2, userIds: ['u1', 'u2'] }],
+    });
+    emit('reaction:removed', {
+      messageId: 5,
+      channelId: 'c1',
+      emoji: '👍',
+      count: 1,
+      userIds: ['u2'],
+    });
+    expect(read()[0]).toMatchObject({ reactions: [{ emoji: '👍', count: 1, userIds: ['u2'] }] });
+    emit('reaction:removed', { messageId: 5, channelId: 'c1', emoji: '👍', count: 0, userIds: [] });
+    expect(read()[0]).toMatchObject({ reactions: [] });
   });
 
   it('thread:reply-created: 親の返信数を更新する。返信は、一覧に加えない', () => {

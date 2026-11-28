@@ -262,3 +262,22 @@ export const threadMembers = pgTable(
   },
   (t) => [primaryKey({ columns: [t.rootMessageId, t.userId] })],
 );
+
+/** 絵文字リアクション(FR-108)。1 人が、1 つのメッセージに、同じ絵文字を 1 つだけ付けられる */
+export const reactions = pgTable(
+  'reactions',
+  {
+    messageId: bigint('message_id', { mode: 'number' })
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    emoji: text('emoji').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.userId, t.emoji] }),
+    check('reactions_emoji_length', sql`char_length(${t.emoji}) BETWEEN 1 AND 32`),
+  ],
+);
