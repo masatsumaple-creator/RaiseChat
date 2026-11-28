@@ -145,6 +145,10 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       const workspaceId = workspaceOf(request).workspaceId;
       try {
         const created = await db.transaction(async (tx) => {
+          // 所属の行を共有ロックして、同時のキックとの順序を決める(キックされた人が、作成者として残らないように)
+          if (!(await isActiveMember(tx, workspaceId, userId))) {
+            throw new AppError(403, 'forbidden', 'このワークスペースは、利用できません。');
+          }
           const [row] = await tx
             .insert(channels)
             .values({ workspaceId, type, name, createdBy: userId })

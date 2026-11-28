@@ -1,5 +1,5 @@
 import type { KickedMemberResponse } from '@raisechat/shared';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authOf } from '../auth/guards';
@@ -151,7 +151,6 @@ export function registerKickRoutes(app: FastifyInstance, deps: KickRouteDeps): v
             eq(memberships.workspaceId, workspaceOf(request).workspaceId),
             eq(memberships.userId, parsed.data),
             eq(memberships.status, 'kicked'),
-            inArray(memberships.role, ['member']),
           ),
         )
         .returning({ userId: memberships.userId });

@@ -368,6 +368,43 @@ describe('POST /api/workspaces/:ws/members/:userId/kick(FR-302)', () => {
     ).toEqual([]);
   });
 
+  it('キックの途中のチャンネルの作成は、403 になり、チャンネルも ChannelMember も残らない', async () => {
+    const { app, victim, ws } = await raceSetup();
+    const res = await duringKick(ws, victim.id, () =>
+      send(app, 'POST', victim, `/api/workspaces/${ws}/channels`, {
+        name: 'ghost',
+        type: 'public',
+      }),
+    );
+    expect(res.statusCode).toBe(403);
+    expect(await memberRows(victim.id, ws)).toEqual([]);
+    expect(
+      await testDb.db
+        .select()
+        .from(channels)
+        .where(and(eq(channels.workspaceId, ws), eq(channels.createdBy, victim.id))),
+    ).toEqual([]);
+  });
+
+  it('キックされた親の投稿者は、あとの返信で、スレッドの参加者に戻らない。返信した人は、参加者になる', async () => {
+    const { app, owner, alice, bob, ws, root } = await setup();
+    // alice は、返信しており、スレッドの参加者。root の投稿者は bob
+    await kick(app, owner, ws, bob.id);
+    expect(
+      await testDb.db.select().from(threadMembers).where(eq(threadMembers.userId, bob.id)),
+    ).toEqual([]);
+    // bob(キック済みの、親の投稿者)のスレッドに、alice が返信しても、bob は、参加者に戻らない
+    const res = await send(app, 'POST', alice, `/api/messages/${root.id}/replies`, {
+      body: '続き',
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const members = await testDb.db
+      .select()
+      .from(threadMembers)
+      .where(eq(threadMembers.rootMessageId, root.id));
+    expect(members.map((m) => m.userId)).toEqual([alice.id]);
+  });
+
   it('本物のキックと、同時の参加・招待・DM の作成を、並べても、kicked の人に、ChannelMember が残らない', async () => {
     for (let i = 0; i < 4; i += 1) {
       const { app, owner, victim, friend, ws, open, secret } = await raceSetup();
