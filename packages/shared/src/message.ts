@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ReactionSummary } from './emoji';
+import type { MentionResponse } from './mention';
 import { codePointLength } from './text';
 
 /** メッセージ本文の上限(設計書 §2。DB の CHECK と同じ。コードポイント数) */
@@ -66,6 +67,8 @@ export interface MessageResponse {
   replyCount: number;
   /** 絵文字ごとのリアクション(付けた順。FR-108) */
   reactions: ReactionSummary[];
+  /** 有効なメンション(その人が参加者のときに登録されたもの。ユーザー名の順。FR-109) */
+  mentions: MentionResponse[];
   deleted: false;
 }
 

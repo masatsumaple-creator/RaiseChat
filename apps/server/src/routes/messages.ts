@@ -6,6 +6,7 @@ import {
   type MessageListItem,
   type MessagePageResponse,
   type MessageResponse,
+  type MentionResponse,
   type ReactionSummary,
 } from '@raisechat/shared';
 import { and, desc, eq, isNull, lt, sql } from 'drizzle-orm';
@@ -14,8 +15,9 @@ import { channelOf, requireChannel } from '../auth/channel-guards';
 import { authOf } from '../auth/guards';
 import { messageOf, requireAuthor } from '../auth/message-guards';
 import type { Db } from '../db/client';
-import { messages, reactions, users } from '../db/schema';
+import { messages, mentions, reactions, users } from '../db/schema';
 import { AppError, parseWith } from '../errors';
+import { loadMentions, mentionsOf, notifyMentions, syncMentions } from '../messages/mentions';
 import { loadReactions, reactionsOf } from '../messages/reactions';
 import { avatarUrlFor } from '../profile/avatar';
 import { chRoom, type Realtime } from '../realtime/realtime';
@@ -47,6 +49,7 @@ export function toMessageResponse(
   author: AuthorRow,
   replyCount: number,
   reactions: ReactionSummary[],
+  mentions: MentionResponse[],
 ): MessageResponse {
   return {
     id: row.id,
@@ -63,6 +66,7 @@ export function toMessageResponse(
     editedAt: row.editedAt?.toISOString() ?? null,
     replyCount,
     reactions,
+    mentions,
     deleted: false,
   };
 }
@@ -105,11 +109,18 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
           .insert(messages)
           .values({ channelId, userId: me.id, body })
           .returning();
-        return inserted!;
+        const synced = await syncMentions(tx, {
+          id: inserted!.id,
+          channelId,
+          authorId: me.id,
+          body,
+        });
+        return { inserted: inserted!, synced };
       });
-      const response = toMessageResponse({ ...row, body }, me, 0, []);
+      const response = toMessageResponse({ ...row.inserted, body }, me, 0, [], row.synced.mentions);
       // コミットの後に、チャンネルの参加者へ通知する(設計書 §6.4)
       realtime.emit(chRoom(channelId), 'message:created', response);
+      notifyMentions(realtime, row.synced, response);
       return reply.status(201).send(response);
     },
   );
@@ -159,6 +170,10 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
         db,
         page.filter((r) => r.deletedAt === null).map((r) => r.id),
       );
+      const mentionsById = await loadMentions(
+        db,
+        page.filter((r) => r.deletedAt === null).map((r) => r.id),
+      );
       const items: MessageListItem[] = page.map((r) => {
         if (r.deletedAt !== null || r.body === null) {
           const deleted: DeletedMessageResponse = {
@@ -175,6 +190,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
           r.author,
           r.replyCount,
           reactionsById.get(r.id) ?? [],
+          mentionsById.get(r.id) ?? [],
         );
       });
       return { messages: items, nextCursor: hasMore ? page[page.length - 1]!.id : null };
@@ -202,22 +218,36 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
           author,
           await countReplies(db, current.id),
           await reactionsOf(db, current.id),
+          await mentionsOf(db, current.id),
         );
       }
 
       // 削除済みでないときだけ更新する(判定の後に、削除された場合も、矛盾を残さない)
-      const [updated] = await db
-        .update(messages)
-        .set({ body, editedAt: sql`now()` })
-        .where(and(eq(messages.id, current.id), isNull(messages.deletedAt)))
-        .returning();
-      if (!updated) throw new AppError(404, 'not_found', '見つかりません。');
+      // 同じトランザクションで、メンションを差分更新する(新しく加わった人だけが、通知の対象)
+      const result = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .update(messages)
+          .set({ body, editedAt: sql`now()` })
+          .where(and(eq(messages.id, current.id), isNull(messages.deletedAt)))
+          .returning();
+        if (!row) return null;
+        const synced = await syncMentions(tx, {
+          id: row.id,
+          channelId: row.channelId,
+          authorId: me.id,
+          body,
+        });
+        return { updated: row, synced };
+      });
+      if (!result) throw new AppError(404, 'not_found', '見つかりません。');
+      const { updated, synced } = result;
 
       const response = toMessageResponse(
         { ...updated, body },
         author,
         await countReplies(db, updated.id),
         await reactionsOf(db, updated.id),
+        synced.mentions,
       );
       // トップレベルは message:updated、返信は thread:reply-updated(どちらか一方だけ送る。設計書 §10 の T17)
       if (response.parentId === null) {
@@ -225,6 +255,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       } else {
         realtime.emit(chRoom(response.channelId), 'thread:reply-updated', response);
       }
+      notifyMentions(realtime, synced, response);
       return response;
     },
   );
@@ -236,7 +267,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
     async (request, reply) => {
       const current = messageOf(request);
       // すでに削除されていれば(判定の後の、同時の削除)、404
-      // 同じトランザクションで、リアクションも無効にする(FR-104。設計書 §2.1)
+      // 同じトランザクションで、リアクション・メンションも無効にする(FR-104。設計書 §2.1)
       const deleted = await db.transaction(async (tx) => {
         const [row] = await tx
           .update(messages)
@@ -245,6 +276,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
           .returning({ id: messages.id });
         if (!row) return false;
         await tx.delete(reactions).where(eq(reactions.messageId, current.id));
+        await tx.delete(mentions).where(eq(mentions.messageId, current.id));
         return true;
       });
       if (!deleted) throw new AppError(404, 'not_found', '見つかりません。');

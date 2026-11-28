@@ -18,6 +18,7 @@ function msg(id: number, authorId = 'u1'): MessageResponse {
     editedAt: null,
     replyCount: 0,
     reactions: [],
+    mentions: [],
     deleted: false,
   };
 }

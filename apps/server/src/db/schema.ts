@@ -281,3 +281,26 @@ export const reactions = pgTable(
     check('reactions_emoji_length', sql`char_length(${t.emoji}) BETWEEN 1 AND 32`),
   ],
 );
+
+/**
+ * メンション(FR-109)。投稿・編集の本文から解析し、そのチャンネルの参加者に当てはまる分だけ登録する。
+ * 編集では、既読済みの行を残して、差分だけ作り直す。read_at は、既読位置とは独立して消し込む(フェーズ 5)。
+ */
+export const mentions = pgTable(
+  'mentions',
+  {
+    messageId: bigint('message_id', { mode: 'number' })
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    readAt: timestamp('read_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.userId] }),
+    index('mentions_unread_idx')
+      .on(t.userId)
+      .where(sql`${t.readAt} IS NULL`),
+  ],
+);
