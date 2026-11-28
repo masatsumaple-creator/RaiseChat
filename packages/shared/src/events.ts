@@ -51,6 +51,10 @@ export interface ServerToClientEvents {
   /** DM の作成(2 人の user ルームへ。peer は、受け取る人から見た相手) */
   'dm:created': (channel: ChannelResponse) => void;
   'workspace:added': (workspace: WorkspaceResponse) => void;
+  /** キック(FR-302)。キックされた人の user ルームへ。クライアントは、そのワークスペースの表示を閉じる */
+  'workspace:removed': (payload: { workspaceId: string }) => void;
+  /** キック。ws ルームへ(メンバー一覧から外す) */
+  'member:removed': (payload: { workspaceId: string; userId: string }) => void;
   'member:joined': (payload: { workspaceId: string; member: MemberResponse }) => void;
   'channel:created': (channel: ChannelResponse) => void;
   'channel:added': (channel: ChannelResponse) => void;

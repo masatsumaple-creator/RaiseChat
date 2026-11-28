@@ -6,12 +6,12 @@ import {
   type MessageResponse,
   type ReplyPageResponse,
 } from '@raisechat/shared';
-import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { authOf } from '../auth/guards';
 import { requireMessageChannel, targetMessageOf } from '../auth/message-guards';
 import type { Db } from '../db/client';
-import { messages, threadMembers, users } from '../db/schema';
+import { channelMembers, messages, threadMembers, users } from '../db/schema';
 import { AppError, parseWith } from '../errors';
 import { attachmentsOf } from '../messages/attachments';
 import { loadMentions, notifyMentions, syncMentions } from '../messages/mentions';
@@ -68,8 +68,21 @@ export function registerThreadRoutes(app: FastifyInstance, deps: ThreadRouteDeps
             body,
           })
           .returning();
-        // 返信した人と、親の投稿者を、スレッドの参加者にする(すでにいれば、何もしない)
-        const members = [...new Set([me.id, parent.userId])];
+        // 返信した人と、親の投稿者を、スレッドの参加者にする(すでにいれば、何もしない)。
+        // チャンネルの参加者の行を共有ロックして、まだ参加している人だけにする(キックされた親の投稿者を、
+        // スレッドの参加者に戻さない。同時のキックとも、順序が決まる。FR-302)
+        const present = await tx
+          .select({ userId: channelMembers.userId })
+          .from(channelMembers)
+          .where(
+            and(
+              eq(channelMembers.channelId, target.channelId),
+              inArray(channelMembers.userId, [me.id, parent.userId]),
+            ),
+          )
+          .for('share');
+        if (!present.some((p) => p.userId === me.id)) throw notFound();
+        const members = [...new Set(present.map((p) => p.userId))];
         await tx
           .insert(threadMembers)
           .values(members.map((userId) => ({ rootMessageId: target.id, userId })))

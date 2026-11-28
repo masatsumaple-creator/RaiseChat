@@ -77,6 +77,7 @@ export type {
 export { WORKSPACE_NAME_MAX_LENGTH, createWorkspaceSchema } from './workspace';
 export type {
   CreateWorkspaceRequest,
+  KickedMemberResponse,
   MemberResponse,
   WorkspaceResponse,
   WorkspaceRole,

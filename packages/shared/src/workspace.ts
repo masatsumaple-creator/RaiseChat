@@ -41,3 +41,11 @@ export interface MemberResponse {
   avatarUrl: string | null;
   role: WorkspaceRole;
 }
+
+/** キック済みのユーザー(GET /workspaces/:ws/kicked。FR-304) */
+export interface KickedMemberResponse {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
