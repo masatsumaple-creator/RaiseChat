@@ -50,3 +50,11 @@ export const postMessage = (channelId: string, body: string) =>
     method: 'POST',
     json: { body },
   });
+
+/** 自分のメッセージの編集(FR-103) */
+export const editMessage = (messageId: number, body: string) =>
+  apiFetch<MessageResponse>(`/api/messages/${messageId}`, { method: 'PATCH', json: { body } });
+
+/** 自分のメッセージの削除(FR-104。論理削除) */
+export const deleteMessage = (messageId: number) =>
+  apiFetch<void>(`/api/messages/${messageId}`, { method: 'DELETE' });
