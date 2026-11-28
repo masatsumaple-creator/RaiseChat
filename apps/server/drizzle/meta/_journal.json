@@ -36,6 +36,13 @@
       "when": 1795857874572,
       "tag": "0004_polite_proudstar",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795858242952,
+      "tag": "0005_daily_inertia",
+      "breakpoints": true
     }
   ]
 }

@@ -196,3 +196,27 @@ export const invitations = pgTable(
     index('invitations_workspace_id_idx').on(t.workspaceId),
   ],
 );
+
+/**
+ * メッセージ。フェーズ 2 では、投稿と取得に使う列だけを持つ(FR-101)。
+ * スレッド(parent_id)・編集(edited_at)・削除(deleted_at、body の null 化)は、フェーズ 3 で追加する。
+ */
+export const messages = pgTable(
+  'messages',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    channelId: uuid('channel_id')
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    body: text('body').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('messages_body_length', sql`char_length(${t.body}) BETWEEN 1 AND 4000`),
+    // チャンネルの履歴(新しい順)
+    index('messages_channel_idx').on(t.channelId, sql`${t.id} DESC`),
+  ],
+);

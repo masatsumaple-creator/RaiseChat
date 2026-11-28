@@ -25,6 +25,19 @@ export type {
   ChannelType,
   CreateChannelRequest,
 } from './channel';
+export {
+  MESSAGE_BODY_MAX_LENGTH,
+  MESSAGE_PAGE_SIZE,
+  hasForbiddenControlChars,
+  messageListQuerySchema,
+  postMessageSchema,
+} from './message';
+export type {
+  MessageAuthor,
+  MessagePageResponse,
+  MessageResponse,
+  PostMessageRequest,
+} from './message';
 export { createInvitationSchema } from './invitation';
 export type {
   CreateInvitationRequest,
