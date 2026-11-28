@@ -6,6 +6,7 @@ import type { Db } from './db/client';
 import { AppError, registerErrorHandling } from './errors';
 import { RateLimiter } from './rate-limit';
 import { registerAuthRoutes } from './routes/auth';
+import { registerChannelRoutes } from './routes/channels';
 import { registerProfileRoutes } from './routes/profile';
 import { registerWorkspaceRoutes } from './routes/workspaces';
 import { processStorageDeletions } from './storage/deletion-queue';
@@ -102,6 +103,7 @@ export function buildApp({
   });
 
   registerWorkspaceRoutes(app, { db });
+  registerChannelRoutes(app, { db });
 
   return app;
 }
