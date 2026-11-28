@@ -293,6 +293,20 @@ describe('ChannelPage(FR-101, 203, 204)', () => {
       expect(screen.queryByRole('complementary', { name: 'スレッド' })).toBeNull();
     });
 
+    it('URL の thread=親の ID で、スレッドのパネルを開いた状態になる(検索結果の返信から開く)', async () => {
+      renderChannel('c1?thread=1', {
+        ...listApi(parentMsg()),
+        'GET /api/messages/1/replies': () =>
+          json(200, {
+            parent: parentMsg(),
+            replies: [reply(2, '検索で見つけた返信')],
+            nextCursor: null,
+          }),
+      });
+      const panel = await screen.findByRole('complementary', { name: 'スレッド' });
+      await within(panel).findByText('検索で見つけた返信');
+    });
+
     it('返信を投稿すると、一覧に加わり、親の返信数が増える', async () => {
       const api = renderChannel('c1', {
         ...listApi(parentMsg()),

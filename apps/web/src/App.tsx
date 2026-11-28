@@ -3,6 +3,7 @@ import { PublicOnly, RequireAuth } from './auth/guards';
 import { ChannelPage } from './pages/ChannelPage';
 import { BrowseChannelsPage, NewChannelPage, WorkspaceIndex } from './pages/ChannelForms';
 import { NewDmPage } from './pages/NewDmPage';
+import { SearchPage } from './pages/SearchPage';
 import { HomePage, NewWorkspacePage } from './pages/HomePage';
 import { InvitationsPage } from './pages/InvitationsPage';
 import { InvitePage } from './pages/InvitePage';
@@ -39,6 +40,7 @@ export function App() {
             <Route path="channels/new" element={<NewChannelPage />} />
             <Route path="channels/browse" element={<BrowseChannelsPage />} />
             <Route path="dms/new" element={<NewDmPage />} />
+            <Route path="search" element={<SearchPage />} />
             <Route path="members" element={<WorkspaceHome />} />
             <Route path="invitations" element={<InvitationsPage />} />
           </Route>

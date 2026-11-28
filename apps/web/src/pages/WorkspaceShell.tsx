@@ -7,6 +7,7 @@ import { ApiError } from '../api/client';
 import { getWorkspace, useWorkspaces, workspaceKey } from '../api/workspaces';
 import { clearLastWorkspace, getLastWorkspace, setLastWorkspace } from '../auth/last-workspace';
 import { ChannelNav } from './ChannelNav';
+import { SearchBox } from './SearchBox';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 /** 子の画面(メンバー一覧・招待の管理)が、いま開いているワークスペースを取り出す */
@@ -80,6 +81,7 @@ export function WorkspaceShell() {
         ) : (
           <>
             <h1>{workspace.data.name}</h1>
+            <SearchBox workspaceId={workspace.data.id} />
             <Outlet context={workspace.data} />
           </>
         )}

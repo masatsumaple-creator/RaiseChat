@@ -183,3 +183,18 @@ td {
   max-width: 90vw;
   max-height: 80vh;
 }
+
+.search-box {
+  display: flex;
+  gap: 0.5em;
+  align-items: center;
+  margin: 0.5em 0;
+}
+.search-channel,
+.search-reply {
+  color: #555;
+  font-size: 0.85em;
+}
+.search-excerpt mark {
+  background: #fde68a;
+}
