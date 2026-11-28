@@ -1,12 +1,14 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { login } from '../api/auth';
 import { ME_QUERY_KEY } from '../api/me';
 import { errorMessage } from '../api/client';
+import { safeNext, withNext } from '../auth/next';
 
 export function LoginPage() {
   const queryClient = useQueryClient();
+  const next = safeNext(useLocation().search);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
@@ -52,7 +54,7 @@ export function LoginPage() {
         </button>
       </form>
       <p>
-        アカウントがない場合は、<Link to="/register">新規登録</Link>
+        アカウントがない場合は、<Link to={withNext('/register', next)}>新規登録</Link>
       </p>
     </main>
   );

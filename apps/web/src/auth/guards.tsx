@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useMe } from '../api/me';
+import { safeNext } from './next';
 import { usePendingRecovery } from './pending-recovery';
 
 /** 認証の状態の取得中・失敗の表示。ログイン済みか否かが分かるまで、どちらの画面も出さない */
@@ -30,11 +31,13 @@ export function RequireAuth() {
 /** ログイン前の画面(ログイン・登録)。ログイン済みなら、ホームへ */
 export function PublicOnly() {
   const { pending } = usePendingRecovery();
+  // ログイン後は、?next= があれば(招待リンクなど)そこへ戻る。なければホーム
+  const next = safeNext(useLocation().search) ?? '/';
   return (
     <AuthGate>
       {(loggedIn) =>
         // リカバリーコードの保存の確認が済むまでは、ログイン済みでも、登録の画面にとどめる
-        loggedIn && !pending ? <Navigate to="/" replace /> : <Outlet />
+        loggedIn && !pending ? <Navigate to={next} replace /> : <Outlet />
       }
     </AuthGate>
   );

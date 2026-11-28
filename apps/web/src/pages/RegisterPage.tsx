@@ -1,16 +1,18 @@
 import { PASSWORD_MIN_LENGTH } from '@raisechat/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { register } from '../api/auth';
 import { errorMessage } from '../api/client';
 import { ME_QUERY_KEY } from '../api/me';
+import { safeNext, withNext } from '../auth/next';
 import { usePendingRecovery, type PendingRecovery } from '../auth/pending-recovery';
 
 /** 登録の直後に、リカバリーコードを一度だけ見せる。保存したことの確認が済むまで、先へ進めない */
 function RecoveryCodeStep({ pending }: { pending: PendingRecovery }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const next = safeNext(useLocation().search);
   const { setPending } = usePendingRecovery();
   const [saved, setSaved] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -27,7 +29,7 @@ function RecoveryCodeStep({ pending }: { pending: PendingRecovery }) {
   function proceed() {
     queryClient.setQueryData(ME_QUERY_KEY, pending.user);
     setPending(null);
-    void navigate('/', { replace: true });
+    void navigate(next ?? '/', { replace: true });
   }
 
   return (
@@ -57,6 +59,7 @@ function RecoveryCodeStep({ pending }: { pending: PendingRecovery }) {
 }
 
 export function RegisterPage() {
+  const next = safeNext(useLocation().search);
   const { pending, setPending } = usePendingRecovery();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -106,7 +109,7 @@ export function RegisterPage() {
         </button>
       </form>
       <p>
-        すでにアカウントがある場合は、<Link to="/login">ログイン</Link>
+        すでにアカウントがある場合は、<Link to={withNext('/login', next)}>ログイン</Link>
       </p>
     </main>
   );
