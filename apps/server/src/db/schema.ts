@@ -171,3 +171,28 @@ export const channelMembers = pgTable(
     index('channel_members_user_id_idx').on(t.userId),
   ],
 );
+
+/** 招待リンク(FR-301)。トークンは平文で保存せず、ハッシュだけを保存する */
+export const invitations = pgTable(
+  'invitations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    maxUses: integer('max_uses'), // null は無制限
+    usedCount: integer('used_count').notNull().default(0),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('invitations_max_uses_check', sql`${t.maxUses} IS NULL OR ${t.maxUses} > 0`),
+    check('invitations_used_count_check', sql`${t.usedCount} >= 0`),
+    index('invitations_workspace_id_idx').on(t.workspaceId),
+  ],
+);
