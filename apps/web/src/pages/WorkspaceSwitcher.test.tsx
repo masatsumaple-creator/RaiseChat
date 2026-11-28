@@ -49,6 +49,8 @@ describe('ワークスペースの切り替え(WorkspaceShell)', () => {
       'GET /api/workspaces': () => json(200, [A, B]),
       'GET /api/workspaces/ws-a': () => json(200, A),
       'GET /api/workspaces/ws-b': () => json(200, B),
+      'GET /api/workspaces/ws-a/channels': () => json(200, []),
+      'GET /api/workspaces/ws-b/channels': () => json(200, []),
       'GET /api/workspaces/ws-a/members': () => json(200, []),
       'GET /api/workspaces/ws-b/members': () => json(200, []),
       ...extra,
@@ -59,6 +61,7 @@ describe('ワークスペースの切り替え(WorkspaceShell)', () => {
           <Routes>
             <Route path="/w/:wsId" element={<WorkspaceShell />}>
               <Route index element={<WorkspaceHome />} />
+              <Route path="members" element={<WorkspaceHome />} />
             </Route>
             <Route path="/" element={<Path />} />
           </Routes>

@@ -1,10 +1,12 @@
 import type { WorkspaceResponse } from '@raisechat/shared';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { Link, Outlet, useOutletContext, useParams } from 'react-router-dom';
+import { Link, Outlet, useMatch, useOutletContext, useParams } from 'react-router-dom';
+import { channelsKey, listChannels } from '../api/channels';
 import { ApiError } from '../api/client';
 import { getWorkspace, useWorkspaces, workspaceKey } from '../api/workspaces';
 import { clearLastWorkspace, getLastWorkspace, setLastWorkspace } from '../auth/last-workspace';
+import { ChannelNav } from './ChannelNav';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 /** 子の画面(メンバー一覧・招待の管理)が、いま開いているワークスペースを取り出す */
@@ -22,6 +24,14 @@ export function WorkspaceShell() {
     retry: false,
   });
   const workspaces = useWorkspaces();
+  const currentChannelId = useMatch('/w/:wsId/c/:chId')?.params.chId;
+  const channels = useQuery({
+    queryKey: channelsKey(wsId ?? ''),
+    queryFn: ({ signal }) => listChannels(wsId!, signal),
+    // ワークスペースを使える(所属している)と分かってから取る
+    enabled: wsId !== undefined && workspace.isSuccess,
+    retry: false,
+  });
 
   useEffect(() => {
     if (!wsId) return;
@@ -41,6 +51,13 @@ export function WorkspaceShell() {
       <aside>
         {workspaces.data ? (
           <WorkspaceSwitcher workspaces={workspaces.data} currentId={wsId} />
+        ) : null}
+        {workspace.data && channels.data ? (
+          <ChannelNav
+            workspace={workspace.data}
+            channels={channels.data}
+            currentChannelId={currentChannelId}
+          />
         ) : null}
       </aside>
       <section>

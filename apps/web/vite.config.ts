@@ -11,6 +11,10 @@ export default defineConfig({
   server: {
     port: Number(process.env['WEB_PORT'] ?? 5173), // E2E テストは、別のポートで起動する
     strictPort: true, // ALLOWED_ORIGIN と食い違わないよう、ポートが塞がっていたら失敗させる
-    proxy: { '/api': { target: API_TARGET } },
+    proxy: {
+      '/api': { target: API_TARGET },
+      // WebSocket(Socket.IO)。Origin と Cookie は、そのまま中継される
+      '/socket.io': { target: API_TARGET, ws: true },
+    },
   },
 });
